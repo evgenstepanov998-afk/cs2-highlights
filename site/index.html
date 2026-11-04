@@ -15,7 +15,7 @@ a{color:inherit}
 header{display:flex;align-items:center;gap:16px;padding:14px 24px;border-bottom:1px solid var(--line);background:var(--panel)}
 header h1{font-size:18px;margin:0;letter-spacing:.3px}
 header h1 span{color:var(--accent)}
-header nav{margin-left:auto;display:flex;gap:8px}
+header nav{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
 main{max-width:1400px;margin:0 auto;padding:20px 24px 60px}
 button,.btn{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer;text-decoration:none}
 button:hover,.btn:hover{border-color:#3b4250}
@@ -82,7 +82,7 @@ h2{font-size:16px;margin:0 0 12px;color:var(--muted);font-weight:600;text-transf
 <body>
 <header>
   <h1><span>▶</span> Хайлайты CS2</h1>
-  <nav><a class="btn" href="#/">Библиотека</a></nav>
+  <nav><a class="btn" href="#/">Библиотека</a><button id="quit" hidden title="Полностью выключить программу на этом компьютере">⏻ Выключить программу</button></nav>
 </header>
 <main id="app"></main>
 
@@ -110,7 +110,17 @@ boot();
 // keeps the helper alive while this tab is open; it quits ~2 min after the tab is closed
 setInterval(() => { if (ready) fetch(API + "/api/ping").catch(() => { ready = false; boot(); }); }, 20000);
 
+$("#quit").onclick = async () => {
+  const j = await api("/api/job").catch(() => ({}));
+  if (!confirm(j.running ? "Идёт запись. Остановить её и выключить программу? Готовые клипы сохранятся."
+                         : "Выключить программу CS2 Highlights на этом компьютере?")) return;
+  await api("/api/quit", {}).catch(() => {});
+  ready = false;
+  setTimeout(boot, 1500);
+};
+
 function route() {
+  $("#quit").hidden = false;
   const m = location.hash.match(/^#\/d\/(.+)$/);
   if (m) showDemo(decodeURIComponent(m[1])); else showHome();
 }
@@ -133,6 +143,7 @@ async function boot() {
 }
 
 function showOffline() {
+  $("#quit").hidden = true;
   $("#app").innerHTML = `
     <section class="panel hero">
       <h2>Программа не запущена</h2>

@@ -1,0 +1,5 @@
+demoparser2
+pandas
+zstandard
+pycaw
+comtypes

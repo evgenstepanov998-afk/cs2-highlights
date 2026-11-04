@@ -11,7 +11,7 @@ from webview.dom import DOMEventHandler
 
 from . import config, server
 
-MUTEX_NAME = "Local\\KillcamSingleInstance"
+MUTEX_NAME = "Local\\KillcamDemoSingleInstance" if config.DEMO else "Local\\KillcamSingleInstance"
 DEMO_EXT = (".dem", ".dem.gz", ".dem.zst")
 
 
@@ -39,6 +39,21 @@ class Bridge:
         if not dst.lower().endswith(".mp4"):
             dst += ".mp4"
         shutil.copyfile(src, dst)
+        return {"ok": True, "path": dst}
+
+    def save_export(self, eid, suggested):
+        """Save dialog for a finished export (glued / vertical clip with the watermark)."""
+        st = server.export.EXPORTS.get(eid)
+        if not st or st.get("state") != "done" or not st.get("path"):
+            return {"ok": False}
+        res = self._window.create_file_dialog(webview.FileDialog.SAVE, save_filename=suggested,
+                                             file_types=("MP4 video (*.mp4)",))
+        if not res:
+            return {"ok": False, "cancelled": True}
+        dst = res if isinstance(res, str) else res[0]
+        if not dst.lower().endswith(".mp4"):
+            dst += ".mp4"
+        shutil.copyfile(st["path"], dst)
         return {"ok": True, "path": dst}
 
     def show_in_folder(self, path):
@@ -75,6 +90,7 @@ def main():
     cfg = config.load()
     if cfg.get("steam_dir"):
         server.stealth.restore_video(cfg["steam_dir"])  # in case the last run was cut off mid-recording
+    server.check_sound()  # 2.0.0–2.0.1 left CS2 muted in the Windows mixer after recording
 
     base = server.start()
     bridge = Bridge()

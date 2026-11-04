@@ -37,12 +37,42 @@ def _scrub(text):
     return text
 
 
+def _run(*cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=20, errors="replace",
+                              creationflags=config.NO_WINDOW).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _gpu():
+    out = _run("powershell", "-NoProfile", "-Command",
+               "(Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name + ' / ' + $_.DriverVersion }) -join '; '")
+    return out.strip() or None
+
+
+def _file_version(path):
+    out = _run("powershell", "-NoProfile", "-Command", f"(Get-Item -LiteralPath '{path}').VersionInfo.FileVersion")
+    return out.strip() or None
+
+
+def _crash_events():
+    """Windows 'Application Error' entries for cs2.exe from the last day: they name the module that crashed."""
+    out = _run("wevtutil", "qe", "Application", "/c:40", "/rd:true", "/f:text",
+               "/q:*[System[(EventID=1000 or EventID=1001 or EventID=1002) and TimeCreated[timediff(@SystemTime) <= 86400000]]]")
+    events = [e for e in out.split("Event[") if re.search(r"cs2\.exe|AfxHook|HLAE", e, re.I)]
+    return "\n".join("Event[" + e.strip() for e in events[:6]) or "(нет падений cs2.exe за сутки)"
+
+
 def build_report(comment, job):
     cfg = config.load()
     info = {
         "app": f"{config.APP_NAME} {config.VERSION}",
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         "windows": platform.platform(),
+        "cs2_version": config.cs2_patch(cfg),
+        "hlae_version": _file_version(cfg["hlae_exe"]) if os.path.exists(cfg["hlae_exe"]) else None,
+        "gpu": _gpu(),
         "encoder": cfg.get("encoder"),
         "fps": cfg.get("fps"),
         "lang": cfg.get("lang"),
@@ -56,6 +86,7 @@ def build_report(comment, job):
         z.writestr("app_log.txt", _scrub(_tail(config.LOG, 600)))
         z.writestr("last_recording_log.txt", _scrub("\n".join(job.get("log") or [])))
         z.writestr("cs2_console_tail.txt", _scrub(_tail(os.path.join(config.WORK, "netcon.log"), 300)))
+        z.writestr("windows_crashes.txt", _scrub(_crash_events()))
     return buf.getvalue(), info
 
 
@@ -98,6 +129,9 @@ def _ver(s):
 
 def check_updates():
     UPDATE["error"] = None
+    if config.DEMO:  # the demo build is handed over by hand, never updated from the public releases
+        UPDATE.update(available=False, checked=time.time())
+        return UPDATE
     try:
         req = urllib.request.Request(f"https://api.github.com/repos/{config.REPO}/releases/latest", headers=UA)
         with urllib.request.urlopen(req, timeout=15) as r:

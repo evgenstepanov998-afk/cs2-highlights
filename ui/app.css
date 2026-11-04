@@ -346,3 +346,24 @@ h1 .score { font-size: 15px; vertical-align: middle; margin-left: 8px; }
   .side-list { max-height: none; }
   .two { grid-template-columns: 1fr; }
 }
+
+/* ---------- demo build: picking clips, export, Discord ---------- */
+.brand .demo-tag { display: inline-block; margin-left: 6px; padding: 2px 6px; border-radius: 6px; font: 700 10px/1.2 var(--display); letter-spacing: .6px; color: #111; background: linear-gradient(135deg, #ffb347, #ff7a2f); vertical-align: 3px; }
+.clip .check { width: 20px; height: 20px; }
+.clip.picked .check { background: var(--accent); border-color: var(--accent); }
+.clip.picked .check svg { opacity: 1; }
+.clip.picked { border-color: rgba(255, 179, 71, .55); }
+.export-bar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin: 0 0 12px; border-radius: 12px; background: rgba(255, 122, 47, .08); border: 1px solid rgba(255, 122, 47, .35); font-size: 13px; }
+.export-bar .grow { flex: 1; }
+.export-bar a { color: var(--muted); cursor: pointer; }
+.fmt { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0 16px; }
+.fmt button { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); color: var(--text); cursor: pointer; text-align: left; font: inherit; }
+.fmt button.on { border-color: rgba(255, 77, 46, .7); background: rgba(255, 77, 46, .08); }
+.fmt .shape { flex: none; border: 2px solid currentColor; border-radius: 4px; opacity: .8; }
+.fmt small { display: block; color: var(--dim); font-size: 12px; }
+.dialog input.text, .setting input.text { width: 100%; padding: 10px 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); color: var(--text); font: inherit; outline: none; }
+.dialog input.text:focus, .setting input.text:focus { border-color: rgba(255, 77, 46, .6); }
+.dialog .status { min-height: 20px; margin: 4px 0 14px; color: var(--muted); font-size: 13px; }
+.player .check { margin-right: 2px; }
+.player.sel .check { background: var(--accent); border-color: var(--accent); }
+.player.sel .check svg { opacity: 1; }

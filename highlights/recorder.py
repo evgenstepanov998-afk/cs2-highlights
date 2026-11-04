@@ -18,6 +18,8 @@ from . import config, demo, plan, stealth
 
 TICK = demo.TICKRATE
 PREROLL = 40  # ticks played before recording so the seek and camera settle
+REC_VOLUME = 0.03  # in-game volume while recording: barely audible in the user's speakers
+AUDIO_GAIN = 20    # back to the level of volume 0.6 in the clips
 
 
 class GameError(RuntimeError):
@@ -79,9 +81,7 @@ class NetCon:
 
 
 def cs2_running():
-    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq cs2.exe"], capture_output=True, text=True,
-                         creationflags=config.NO_WINDOW).stdout
-    return "cs2.exe" in out
+    return bool(stealth.cs2_pids())
 
 
 def stage_demo(cfg, dem_path, did):
@@ -110,11 +110,36 @@ def launch(cfg, log):
             raise GameError("missing_file", cfg[key])
     cmdline = (f"-steam -insecure +sv_lan 1 -console -novid -sw -noborder -w {cfg['width']} -h {cfg['height']} "
                f"-afxDisableSteamStorage -afxFixNetCon -netconport {cfg['netcon_port']} "
-               "+fps_max 0 +fps_max_ui 0 +fps_max_tools 0 +mat_vsync 0 +demo_ui_mode 0")
+               "+fps_max 0 +fps_max_ui 0 +fps_max_tools 0 +mat_vsync 0 +demo_ui_mode 0 "
+               f"+volume {REC_VOLUME} +snd_menumusic_volume 0")
     log("Запускаю CS2 через HLAE…")
-    subprocess.Popen([cfg["hlae_exe"], "-customLoader", "-noGui", "-autoStart", "-noConfig",
-                      "-hookDllPath", cfg["hook_dll"], "-programPath", cfg["cs2_exe"], "-cmdLine", cmdline],
-                     creationflags=config.NO_WINDOW)
+    p = subprocess.Popen([cfg["hlae_exe"], "-customLoader", "-noGui", "-autoStart", "-noConfig",
+                          "-hookDllPath", cfg["hook_dll"], "-programPath", cfg["cs2_exe"], "-cmdLine", cmdline],
+                         creationflags=config.NO_WINDOW)
+    stealth.LAUNCHER["pid"] = p.pid  # its cs2.exe child is ours; any other CS2 is the user's
+
+
+def fix_sound(cfg, log):
+    """Killcam 2.0.0–2.0.1 left CS2 muted in the Windows mixer. Windows only takes the unmute
+    while the game is running, so start it out of sight, switch its sound on, and close it."""
+    if stealth.cs2_pids():  # the user is playing right now: switch sound on in their game
+        stealth.unmute(stealth.cs2_pids())
+        return
+    try:
+        # low_graphics also backs up the convars file, so the launch volume is not saved
+        with stealth.low_graphics(cfg["steam_dir"]), stealth.WindowHider():
+            launch(cfg, log)
+            deadline = time.time() + 150
+            while time.time() < deadline and not stealth.has_audio(stealth.own_pids()):
+                time.sleep(1)
+            if not stealth.has_audio(stealth.own_pids()):
+                raise GameError("cs2_no_console")
+            time.sleep(2)
+            stealth.unmute(stealth.own_pids())
+    finally:
+        stealth.kill_own()
+        stealth.wait_cs2_exit(20)
+        stealth.LAUNCHER["pid"] = None
 
 
 def setup_streams(con, cfg, raw_dir):
@@ -129,8 +154,10 @@ def setup_streams(con, cfg, raw_dir):
         "mirv_endofmatch enabled 0",
         "cl_draw_only_deathnotices 0",
         "spec_show_xray 0",
-        # in-game volume ends up in the WAV, so keep it; the user is spared via the Windows mixer
-        "volume 0.6", "snd_mute_losefocus 0",
+        # The in-game volume is in the WAV too, so the game plays almost silently and the clip
+        # audio is raised back by AUDIO_GAIN. The Windows mixer is never touched, and the
+        # user's own volume returns with cs2_machine_convars.vcfg (stealth.low_graphics).
+        f"volume {REC_VOLUME}", "snd_mute_losefocus 0",
         # no demo controls or perf overlays in the footage
         "demo_ui_mode 0",
         "cl_showfps 0", "cl_hud_telemetry_frametime_show 0", "cl_hud_telemetry_ping_show 0",
@@ -187,7 +214,9 @@ def finish_clip(cfg, clip, takes, out_dir, tmp_dir):
         # HLAE may still be flushing the file right after "record end" — retry briefly
         for attempt in range(10):
             try:
-                ffmpeg(cfg, "-i", video, *audio, "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", part)
+                ffmpeg(cfg, "-i", video, *audio, "-c:v", "copy",
+                       "-af", f"volume={AUDIO_GAIN},alimiter=limit=0.97",
+                       "-c:a", "aac", "-b:a", "160k", "-shortest", part)
                 break
             except subprocess.CalledProcessError:
                 if attempt == 9:
@@ -306,8 +335,16 @@ TOASTS = {
 }
 
 
-def run(dem_path, steamid, log=print, progress=lambda done, total: None, limit=None,
+MAX_PLAYERS = 3
+
+
+def run(dem_path, steamids, log=print, progress=lambda done, total: None, limit=None,
         phase=lambda name: None):
+    """Records one or several players (up to MAX_PLAYERS) of a demo in a single CS2 session.
+    Each player gets their own library entry. Returns the first player's meta (with "keys")."""
+    if isinstance(steamids, str):
+        steamids = [steamids]
+    steamids = list(dict.fromkeys(steamids))[:MAX_PLAYERS]
     cfg = config.load()
     t0 = time.time()
     dem_path = demo.unpack_if_gz(dem_path, os.path.join(config.WORK, "demos"))
@@ -322,66 +359,100 @@ def run(dem_path, steamid, log=print, progress=lambda done, total: None, limit=N
     phase("launch")
     with stealth.low_graphics(cfg["steam_dir"]), stealth.WindowHider():
         launch(cfg, log)
-        meta = _run_in_game(cfg, log, progress, limit, t0, dem_path, did, steamid, rel_demo, phase)
-    stealth.toast(toast[2], toast[3].format(n=len([c for c in meta["clips"] if c.get("file")])))
+        metas = _run_in_game(cfg, log, progress, limit, t0, dem_path, did, steamids, rel_demo, phase)
+    n = sum(1 for m in metas for c in m["clips"] if c.get("file"))
+    stealth.toast(toast[2], toast[3].format(n=n))
     phase("done")
-    return meta
+    return dict(metas[0], keys=[m["key"] for m in metas])
 
 
-def _run_in_game(cfg, log, progress, limit, t0, dem_path, did, steamid, rel_demo, phase):
+def _run_in_game(cfg, log, progress, limit, t0, dem_path, did, steamids, rel_demo, phase):
     try:
         log("Читаю демку…")
         info = demo.analyze(dem_path)
-        me = next(p for p in info["players"] if p["steamid"] == steamid)
-        clips = plan.build(info, steamid)
-        if limit:  # quick test: only the first few clips
-            clips = clips[:limit]
-        # each clip recorded completely before the next one, so it can be shown right away
-        segs = [dict(seg, clip=c["id"], part=i)
-                for c in clips if not c.get("inside_death") for i, seg in enumerate(c["segments"])]
-        log(f"{info['map']}, {me['name']}: {me['kills']} убийств, {me['deaths']} смертей → "
-            f"{len(clips)} клипов, {len(segs)} отрезков, {plan.total_seconds(clips):.0f} с видео")
+        game_patch = config.cs2_patch(cfg)
+        players, segs = [], []
+        for idx, sid in enumerate(steamids):
+            me = next(p for p in info["players"] if p["steamid"] == sid)
+            clips = plan.build(info, sid)
+            if limit:  # quick test: only the first few clips
+                clips = clips[:limit]
+            key = f"{did}_{sid}"
+            p = {"me": me, "clips": clips, "key": key, "takes": {},
+                 "out_dir": os.path.join(config.LIBRARY, key),
+                 "tmp_dir": os.path.join(config.WORK, "tmp", key),
+                 "by_id": {c["id"]: c for c in clips}}
+            # each clip recorded completely before the next one, so it can be shown right away
+            p_segs = [dict(seg, p=idx, clip=c["id"], part=i)
+                      for c in clips if not c.get("inside_death") for i, seg in enumerate(c["segments"])]
+            segs += p_segs
+            players.append(p)
+            log(f"{info['map']}, {me['name']}: {me['kills']} убийств, {me['deaths']} смертей → "
+                f"{len(clips)} клипов, {len(p_segs)} отрезков, {plan.total_seconds(clips):.0f} с видео")
+        log(f"Версия демки {info.get('patch') or '?'}, версия CS2 {game_patch or '?'}")
 
-        key = f"{did}_{steamid}"
-        out_dir = os.path.join(config.LIBRARY, key)
-        raw_dir = os.path.join(config.WORK, "raw", key)
-        tmp_dir = os.path.join(config.WORK, "tmp", key)
-        for d in (raw_dir, tmp_dir):
-            shutil.rmtree(d, ignore_errors=True)
-            os.makedirs(d)
-        shutil.rmtree(out_dir, ignore_errors=True)
-        os.makedirs(out_dir)
-        lib = Library(key, dem_path, info, me, clips, out_dir, t0, cfg["ffmpeg"])
+        raw_dir = os.path.join(config.WORK, "raw", did)
+        shutil.rmtree(raw_dir, ignore_errors=True)
+        os.makedirs(raw_dir)
+        for p in players:
+            shutil.rmtree(p["tmp_dir"], ignore_errors=True)
+            os.makedirs(p["tmp_dir"])
+            shutil.rmtree(p["out_dir"], ignore_errors=True)
+            os.makedirs(p["out_dir"])
+            p["lib"] = Library(p["key"], dem_path, info, p["me"], p["clips"], p["out_dir"], t0, cfg["ffmpeg"])
 
-        takes = {}
         ready = queue.Queue()
 
         def glue():
-            while (c := ready.get()) is not None:
+            while (item := ready.get()) is not None:
+                p, c = item
                 try:
-                    lib.clip_ready(c, finish_clip(cfg, c, takes, out_dir, tmp_dir))
+                    p["lib"].clip_ready(c, finish_clip(cfg, c, p["takes"], p["out_dir"], p["tmp_dir"]))
                 except Exception as e:
                     log(f"Не склеился клип {c['id']}: {e}")
 
         gluer = threading.Thread(target=glue, daemon=True)
         gluer.start()
-        rec_time = _record_all(cfg, log, progress, rel_demo, raw_dir, segs, takes, clips, ready, phase)
+        try:
+            rec_time = _record_all(cfg, log, progress, rel_demo, raw_dir, segs, players, ready, phase)
+        except GameError as e:
+            # a demo from another CS2 version can crash the game outright instead of printing an error
+            if e.code in ("cs2_closed", "demo_load_failed") and info.get("patch") and game_patch \
+                    and info["patch"] != game_patch:
+                raise GameError("demo_version", f"демка {info['patch']}, CS2 {game_patch}") from e
+            raise
     except Exception:
-        subprocess.run(["taskkill", "/F", "/IM", "cs2.exe"], capture_output=True, creationflags=config.NO_WINDOW)
+        stealth.kill_own()
         raise
-    log(f"Запись: {rec_time:.0f} с на {plan.total_seconds(clips):.0f} с видео")
+    total_video = sum(plan.total_seconds(p["clips"]) for p in players)
+    log(f"Запись: {rec_time:.0f} с на {total_video:.0f} с видео")
     phase("finishing")
     ready.put(None)
     gluer.join()
-    lib.save("done")
-    shutil.rmtree(tmp_dir, ignore_errors=True)
+    for p in players:
+        p["lib"].save("done")
+        shutil.rmtree(p["tmp_dir"], ignore_errors=True)
     shutil.rmtree(raw_dir, ignore_errors=True)
     log(f"Готово за {time.time() - t0:.0f} с.")
-    return lib.meta
+    return [p["lib"].meta for p in players]
 
 
-def _record_all(cfg, log, progress, rel_demo, raw_dir, segs, takes, clips, ready, phase):
+def _record_all(cfg, log, progress, rel_demo, raw_dir, segs, players, ready, phase):
     con = NetCon(cfg["netcon_port"], log)
+    try:
+        return _record_all_inner(con, cfg, log, progress, rel_demo, raw_dir, segs, players, ready, phase)
+    finally:
+        # keep the console even when CS2 dies: it is what a bug report needs most
+        try:
+            os.makedirs(config.WORK, exist_ok=True)
+            with open(os.path.join(config.WORK, "netcon.log"), "wb") as f:
+                f.write(b"".join(con.full))
+        except OSError:
+            pass
+        con.close()
+
+
+def _record_all_inner(con, cfg, log, progress, rel_demo, raw_dir, segs, players, ready, phase):
     con.connect(timeout=180)
     log("CS2 запущена, гружу демку…")
     phase("loading")
@@ -391,25 +462,21 @@ def _record_all(cfg, log, progress, rel_demo, raw_dir, segs, takes, clips, ready
     setup_streams(con, cfg, raw_dir)
     phase("recording")
     t_rec = time.time()
-    by_id = {c["id"]: c for c in clips}
     total = len(segs)
     progress(0, total)
     for n, seg in enumerate(segs, 1):
         ts = time.time()
+        p = players[seg["p"]]
         try:
-            takes[(seg["clip"], seg["part"])] = record_segment(con, seg, n, raw_dir, cfg["fps"])
+            p["takes"][(seg["clip"], seg["part"])] = record_segment(con, seg, n, raw_dir, cfg["fps"])
         except GameError as e:
             log(f"Пропускаю: {e}")
         log(f"  отрезок {n}/{total}: {(seg['end'] - seg['start']) / TICK:.1f} с видео за {time.time() - ts:.1f} с "
             f"(перемотка {seg.get('seek_s', '?')} с, захват {seg.get('rec_s', '?')} с)")
         progress(n, total)
-        clip = by_id[seg["clip"]]
+        clip = p["by_id"][seg["clip"]]
         if seg["part"] == len(clip["segments"]) - 1:
-            ready.put(clip)
+            ready.put((p, clip))
     rec_time = time.time() - t_rec
     con.send("quit")
-    os.makedirs(config.WORK, exist_ok=True)
-    with open(os.path.join(config.WORK, "netcon.log"), "wb") as f:
-        f.write(b"".join(con.full))
-    con.close()
     return rec_time

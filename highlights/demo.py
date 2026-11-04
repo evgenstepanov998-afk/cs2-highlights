@@ -206,6 +206,7 @@ def analyze(path):
     return {
         "map": header.get("map_name"),
         "server": header.get("server_name"),
+        "patch": header.get("patch_version"),  # e.g. "14195" = CS2 1.41.9.5
         "rounds": rounds,
         "events": events,
         "players": players,

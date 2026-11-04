@@ -107,7 +107,9 @@ function confirmModal(title, text, okLabel) {
 }
 
 /* ---------- state ---------- */
-const S = {job: null, settings: null, picked: null, demoInfo: null, player: null, recStarted: 0, update: null};
+const S = {job: null, settings: null, picked: null, demoInfo: null, players: [], recStarted: 0, update: null};
+const isDemo = () => S.settings && S.settings.channel === "demo";
+const maxPlayers = () => (S.settings && S.settings.max_players) || 1;
 let jobTimer = null, viewTimer = null;
 
 async function boot() {
@@ -120,6 +122,35 @@ async function boot() {
   route();
   pollJob();
   setTimeout(() => checkUpdates(false), 1500);
+  setTimeout(soundCheck, 600);
+}
+
+/* ---------- CS2 sound left muted by 2.0.0–2.0.1 ---------- */
+async function soundCheck() {
+  const s = await api("/api/sound").catch(() => null);
+  if (!s || !s.pending || !$("#modal").hidden) return;
+  const m = $("#modal");
+  m.innerHTML = `<div class="dialog wide"><h3>${esc(t("snd_title"))}</h3>
+    <p>${esc(t("snd_text"))}</p><p class="fine">${esc(t("snd_hint"))}</p>
+    <div class="row"><button class="btn ghost" id="sndLater">${esc(t("snd_later"))}</button>
+    <button class="btn ghost" id="sndDone">${esc(t("snd_done_self"))}</button>
+    <button class="btn primary" id="sndFix">${esc(t("snd_fix"))}</button></div></div>`;
+  m.hidden = false;
+  const close = () => { m.hidden = true; m.innerHTML = ""; };
+  $("#sndLater").onclick = close;
+  $("#sndDone").onclick = async () => { await api("/api/sound/dismiss", {}).catch(() => { }); close(); };
+  $("#sndFix").onclick = async () => {
+    $$("button", m).forEach(b => b.disabled = true);
+    $("#sndFix").textContent = t("snd_fixing");
+    try { await api("/api/sound/fix", {}); } catch (e) { close(); return toast(errText(e), "err"); }
+    const tick = async () => {
+      const r = await api("/api/sound").catch(() => ({state: "fixing"}));
+      if (r.state === "fixing") return setTimeout(tick, 1000);
+      close();
+      r.state === "done" ? toast(t("snd_ok"), "ok") : toast(t("snd_err"), "err");
+    };
+    tick();
+  };
 }
 
 /* ---------- first run ---------- */
@@ -172,7 +203,7 @@ function renderShell() {
   $("#root").innerHTML = `
     <div class="shell">
       <aside class="side">
-        <div class="brand">${ICON.logo}<div><b>Killcam</b><small>${esc(t("tagline"))}</small></div></div>
+        <div class="brand">${ICON.logo}<div><b>Killcam${isDemo() ? `<span class="demo-tag">DEMO</span>` : ""}</b><small>${esc(t("tagline"))}</small></div></div>
         <nav class="nav">
           <a data-r="library">${ICON.library}<span>${esc(t("nav_library"))}</span></a>
           <a data-r="new">${ICON.plus}<span>${esc(t("nav_new"))}</span></a>
@@ -366,7 +397,7 @@ async function pageNew(main) {
 window.onDemoDropped = path => { if (!location.hash.startsWith("#/new")) go("new"); setTimeout(() => openDemo(path), 50); };
 
 async function openDemo(path) {
-  S.picked = path; S.demoInfo = null; S.player = null;
+  S.picked = path; S.demoInfo = null; S.players = [];
   $$("#found .item").forEach(r => r.classList.toggle("sel", r.dataset.p === path));
   renderPlayers(true);
   try { S.demoInfo = await api("/api/analyze", {path}); }
@@ -381,32 +412,43 @@ function renderPlayers(loading) {
   if (loading) { side.innerHTML = `<div class="panel" style="padding:40px;text-align:center" class="muted">${esc(t("reading"))}</div>`; return; }
   if (!d) { side.innerHTML = `<div class="panel" style="padding:40px;text-align:center"><span class="muted">${esc(t("choose_first"))}</span></div>`; return; }
   if (d.error) { side.innerHTML = `<div class="error-box">${esc(d.error)}</div>`; return; }
+  const multi = maxPlayers() > 1;
   const team = n => d.players.filter(p => p.team === n).map(p => `
-    <div class="item player ${S.player === p.steamid ? "sel" : ""}" data-s="${p.steamid}">
+    <div class="item player ${S.players.includes(p.steamid) ? "sel" : ""}" data-s="${p.steamid}">
+      ${multi ? `<span class="check">${ICON.check}</span>` : ""}
       <div class="grow"><div class="name">${esc(p.name)}</div><div class="t2">${esc(t("clips_n", {n: p.clips}))}</div></div>
       <div class="kd num"><span class="k">${p.kills}</span> <span class="dim">/</span> <span class="d">${p.deaths}</span></div>
     </div>`).join("");
-  const sel = d.players.find(p => p.steamid === S.player);
+  const sel = S.players.map(s => d.players.find(p => p.steamid === s)).filter(Boolean);
+  const clipsSum = sel.reduce((a, p) => a + p.clips, 0);
+  const minSum = Math.max(1, Math.round(sel.reduce((a, p) => a + p.video_seconds, 0) / 60));
   side.innerHTML = `
     <div class="match-head"><div class="tile pic" style="background:${mapBg(d.map)}"><span>${esc(mapName(d.map).slice(0, 4))}</span></div>
-      <div><h3>${esc(mapName(d.map))} ${(p => p ? scoreHtml([p.won, p.lost]) : "")(d.players.find(p => p.team === 2))}</h3><div class="muted">${esc(t("rounds_n", {n: d.rounds}))} · ${esc(t("pick_player"))}</div></div></div>
+      <div><h3>${esc(mapName(d.map))} ${(p => p ? scoreHtml([p.won, p.lost]) : "")(d.players.find(p => p.team === 2))}</h3><div class="muted">${esc(t("rounds_n", {n: d.rounds}))} · ${esc(multi ? t("pick_players", {n: maxPlayers()}) : t("pick_player"))}</div></div></div>
     <div class="teams">
       <div class="team t"><h4><i></i>${esc(t("team_t"))}</h4><div class="list">${team(2)}</div></div>
       <div class="team ct"><h4><i></i>${esc(t("team_ct"))}</h4><div class="list">${team(3)}</div></div>
     </div>
     <div class="go-bar">
-      <div class="info">${sel ? `<b>${esc(t("go_sel", {name: sel.name}))}</b><span class="muted num">${esc(t("go_info", {clips: sel.clips, min: Math.max(1, Math.round(sel.video_seconds / 60))}))}</span>`
+      <div class="info">${sel.length ? `<b>${esc(t("go_sel", {name: sel.map(p => p.name).join(", ")}))}</b><span class="muted num">${esc(t("go_info", {clips: clipsSum, min: minSum}))}</span>`
         : `<span class="muted">${esc(t("pick_player"))}</span>`}</div>
-      <button class="btn primary lg" id="goRec" ${sel ? "" : "disabled"}>${ICON.rec}${esc(t("go_btn"))}</button>
+      <button class="btn primary lg" id="goRec" ${sel.length ? "" : "disabled"}>${ICON.rec}${esc(t("go_btn"))}</button>
     </div>`;
-  $$(".player", side).forEach(r => r.onclick = () => { S.player = r.dataset.s; renderPlayers(); });
+  $$(".player", side).forEach(r => r.onclick = () => {
+    const s = r.dataset.s;
+    if (!multi) S.players = [s];
+    else if (S.players.includes(s)) S.players = S.players.filter(x => x !== s);
+    else if (S.players.length >= maxPlayers()) return toast(t("pick_max", {n: maxPlayers()}), "err");
+    else S.players = [...S.players, s];
+    renderPlayers();
+  });
   const btn = $("#goRec");
   if (btn) btn.onclick = async () => {
     btn.disabled = true;
     try {
-      await api("/api/record", {path: d.path, steamid: S.player});
+      await api("/api/record", {path: d.path, steamids: S.players});
       S.recStarted = Date.now();
-      S.job = {running: true, phase: "launch", done: 0, total: 0, player: sel.name, map: d.map};
+      S.job = {running: true, phase: "launch", done: 0, total: 0, player: sel.map(p => p.name).join(", "), map: d.map};
       renderRecording();
       pollJob();
     } catch (e) { toast(errText(e), "err"); btn.disabled = false; }
@@ -451,7 +493,7 @@ function renderRecording() {
     if (key) go("watch/" + encodeURIComponent(key));
   };
   const a = $("#again");
-  if (a) a.onclick = () => { S.job = {...S.job, error: null, result: null}; S.demoInfo = null; S.player = null; S.picked = null; api("/api/job").then(x => { S.job = {...x, running: false}; }); pageNewFresh(); };
+  if (a) a.onclick = () => { S.job = {...S.job, error: null, result: null}; S.demoInfo = null; S.players = []; S.picked = null; api("/api/job").then(x => { S.job = {...x, running: false}; }); pageNewFresh(); };
 }
 function pageNewFresh() { S.job = {running: false}; pageNew($("#main")); }
 
@@ -463,6 +505,7 @@ async function pageWatch(main, key) {
   const me = meta.player;
   let clips = meta.clips.filter(c => c.file);
   let filter = "all", cur = null, stopAt = null, autoplay = true;
+  const picks = [];  // demo build: clips ticked for gluing, in the order they were ticked
 
   main.innerHTML = `<div class="page">
     <div class="viewer-head">
@@ -483,13 +526,14 @@ async function pageWatch(main, key) {
           <button class="btn icon-btn" id="next" title="→">${ICON.next}</button>
           <span class="switch on" id="auto"><i></i>${esc(t("v_auto"))}</span>
           <span class="spacer"></span>
+          ${isDemo() ? `<button class="btn" id="exportBtn">${ICON.send}${esc(t("x_btn"))}</button>` : ""}
           <button class="btn primary" id="save">${ICON.save}${esc(t("v_save"))}</button>
           <button class="btn icon-btn" id="folder" title="${esc(t("v_folder"))}">${ICON.folder}</button>
         </div>
         <div class="timeline" id="tl"></div>
         <div class="dim" style="margin-top:10px;font-size:12px">${esc(t("v_keys"))}</div>
       </div>
-      <div class="side-list" id="list"></div>
+      <div><div id="xbar"></div><div class="side-list" id="list"></div></div>
     </div></div>`;
 
   const v = $("#v");
@@ -524,14 +568,33 @@ async function pageWatch(main, key) {
     const rounds = [...new Set(list.map(c => c.round))];
     $("#list").innerHTML = rounds.length ? rounds.map(r => `
       <div class="rgroup"><h5>${esc(t("v_round", {n: r}))}</h5>${list.filter(c => c.round === r).map(c => `
-        <div class="clip ${c.kind} ${cur === c ? "cur" : ""}" data-id="${c.id}">
+        <div class="clip ${c.kind} ${cur === c ? "cur" : ""} ${picks.includes(c.id) ? "picked" : ""}" data-id="${c.id}">
+          ${isDemo() ? `<span class="check" data-pick="${c.id}" title="${esc(t("x_pick"))}">${ICON.check}</span>` : ""}
           <div class="ic">${c.kind === "kill" ? (c.events.length > 1 ? c.events.length + "K" : "K") : "✕"}</div>
           <div class="grow"><div class="t">${title(c)}</div><div class="s">${sub(c)}</div></div>
         </div>`).join("")}</div>`).join("")
       : `<div class="panel" style="padding:30px;text-align:center"><span class="muted">${esc(t("v_empty"))}</span></div>`;
     $$("#list .clip").forEach(el => el.onclick = () => play(clips.find(c => c.id === el.dataset.id)));
+    $$("#list [data-pick]").forEach(el => el.onclick = e => {
+      e.stopPropagation();
+      const id = el.dataset.pick, i = picks.indexOf(id);
+      i >= 0 ? picks.splice(i, 1) : picks.push(id);
+      renderList();
+    });
     const curEl = $("#list .clip.cur");
     if (curEl) curEl.scrollIntoView({block: "nearest"});
+    renderXbar();
+  }
+  function renderXbar() {
+    const bar = $("#xbar");
+    if (!bar) return;
+    bar.innerHTML = isDemo() && picks.length ? `<div class="export-bar">
+      <span class="grow">${esc(t("x_picked", {n: picks.length}))}</span>
+      <a id="xClear">${esc(t("x_clear"))}</a>
+      <button class="btn primary" id="xGo">${esc(t("x_glue"))}</button></div>` : "";
+    if (!picks.length) return;
+    $("#xClear").onclick = () => { picks.length = 0; renderList(); };
+    $("#xGo").onclick = () => exportModal(key, meta, [...picks]);
   }
   function load(c, start, autoplayNow) {
     const src = media(key, c.file);
@@ -578,6 +641,10 @@ async function pageWatch(main, key) {
     const r = await native().save_clip(key, cur.file, name);
     if (r && r.ok) toast(t("saved"), "ok", {label: t("show"), fn: () => native().show_in_folder(r.path)});
   };
+  if ($("#exportBtn")) $("#exportBtn").onclick = () => {
+    const ids = picks.length ? [...picks] : cur ? [cur.id] : [];
+    if (ids.length) exportModal(key, meta, ids);
+  };
   $$("#flt button").forEach(b => b.onclick = () => {
     filter = b.dataset.f;
     $$("#flt button").forEach(x => x.classList.toggle("on", x === b));
@@ -608,6 +675,63 @@ async function pageWatch(main, key) {
   if (meta.status === "recording") viewTimer = setTimeout(refresh, 3000);
 }
 
+/* ---------- export (demo build): glue, 9:16, watermark, Discord ---------- */
+function exportModal(key, meta, ids) {
+  // glued in match order, whatever order they were ticked in
+  const order = Object.fromEntries(meta.clips.map((c, i) => [c.id, i]));
+  ids = [...ids].sort((a, b) => order[a] - order[b]);
+  const m = $("#modal");
+  let vertical = false;
+  const me = meta.player;
+  m.innerHTML = `<div class="dialog wide"><h3>${esc(ids.length > 1 ? t("x_title_n", {n: ids.length}) : t("x_title_1"))}</h3>
+    <p class="fine" style="margin-bottom:10px">${esc(t("x_wm"))}</p>
+    <div class="fmt">
+      <button data-v="0" class="on"><span class="shape" style="width:30px;height:18px"></span><span>${esc(t("x_h"))}<small>${esc(t("x_h_d"))}</small></span></button>
+      <button data-v="1"><span class="shape" style="width:16px;height:28px"></span><span>${esc(t("x_v"))}<small>${esc(t("x_v_d"))}</small></span></button>
+    </div>
+    <div class="status" id="xStatus"></div>
+    <div class="row"><button class="btn ghost" id="xCancel">${esc(t("cancel"))}</button>
+      <button class="btn" id="xDiscord">${ICON.send}${esc(t("x_discord"))}</button>
+      <button class="btn primary" id="xSave">${ICON.save}${esc(t("x_save"))}</button></div></div>`;
+  m.hidden = false;
+  const close = () => { m.hidden = true; m.innerHTML = ""; };
+  m.onclick = e => { if (e.target === m && !busy) close(); };
+  let busy = false;
+  $("#xCancel").onclick = close;
+  $$(".fmt button", m).forEach(b => b.onclick = () => {
+    vertical = b.dataset.v === "1";
+    $$(".fmt button", m).forEach(x => x.classList.toggle("on", x === b));
+  });
+  const status = s => { $("#xStatus").textContent = s; };
+  async function run(discord) {
+    if (discord && !(S.settings && S.settings.discord_webhook_set)) {
+      close(); toast(t("x_no_hook"), "err", {label: t("nav_settings"), fn: () => go("settings")}); return;
+    }
+    busy = true;
+    $$("button", m).forEach(b => b.disabled = true);
+    status(discord ? t("x_working_d") : t("x_working"));
+    let id;
+    try {
+      const text = `🎯 **${me.name}** · ${mapName(meta.map)}${meta.score ? ` ${meta.score[0]}:${meta.score[1]}` : ""} · ${t("x_from")}`;
+      id = (await api("/api/export", {key, clips: ids, vertical, discord, text})).id;
+    } catch (e) { busy = false; close(); return toast(errText(e), "err"); }
+    let st;
+    do {
+      await new Promise(r => setTimeout(r, 800));
+      st = await api("/api/export?id=" + id).catch(() => ({state: "working"}));
+    } while (st.state === "working");
+    busy = false;
+    if (st.state === "error") { close(); return toast(errText(st.error), "err"); }
+    if (discord) { close(); return toast(t("x_sent"), "ok"); }
+    const name = `Killcam_${me.name}_${mapName(meta.map)}${vertical ? "_9x16" : ""}.mp4`.replace(/[^\w.\-]+/g, "_");
+    const r = native() ? await native().save_export(id, name) : null;
+    close();
+    if (r && r.ok) toast(t("saved"), "ok", {label: t("show"), fn: () => native().show_in_folder(r.path)});
+  }
+  $("#xSave").onclick = () => run(false);
+  $("#xDiscord").onclick = () => run(true);
+}
+
 /* ---------- settings ---------- */
 async function pageSettings(main) {
   const s = S.settings = await api("/api/settings").catch(() => S.settings || {});
@@ -624,6 +748,10 @@ async function pageSettings(main) {
         <div style="display:flex;gap:8px">
           ${S.update && S.update.available ? `<button class="btn primary" id="updGo">${ICON.up}${esc(t("upd_install", {v: S.update.latest}))}</button>` : ""}
           <button class="btn" id="updCheck">${esc(t("upd_check"))}</button></div></div>
+      ${s.channel === "demo" ? `<div class="panel setting"><div class="grow"><h4>${esc(t("s_hook"))}</h4>
+          <p style="margin-bottom:10px">${esc(t("s_hook_d"))}</p>
+          <input class="text" id="hook" placeholder="https://discord.com/api/webhooks/…" value="${s.discord_webhook_set ? "••••••••••••" : ""}"></div>
+        <button class="btn" id="hookSave">${esc(t("s_hook_save"))}</button></div>` : ""}
       <div class="panel setting"><div class="grow"><h4>${esc(t("s_folder"))}</h4><p class="path">${esc(s.data_dir)}</p></div>
         <button class="btn" id="openLib">${ICON.folder}${esc(t("s_open"))}</button></div>
       <div class="panel setting"><div class="grow"><h4>${esc(t("s_sys"))}</h4>
@@ -641,6 +769,15 @@ async function pageSettings(main) {
     $$("#fps button").forEach(x => x.classList.toggle("on", x === b));
   });
   $("#openLib").onclick = () => api("/api/open-folder", {}).catch(e => toast(errText(e), "err"));
+  if ($("#hookSave")) $("#hookSave").onclick = async () => {
+    const v = $("#hook").value.trim();
+    if (v.startsWith("•")) return;
+    try {
+      S.settings = await api("/api/settings", {discord_webhook: v});
+      toast(v ? t("s_hook_ok") : t("s_hook_off"), "ok");
+      pageSettings(main);
+    } catch (e) { toast(errText(e), "err"); }
+  };
   $("#updCheck").onclick = async () => { $("#updStatus").textContent = "…"; await checkUpdates(true); pageSettings(main); };
   if ($("#updGo")) $("#updGo").onclick = () => { toast(t("upd_restart"), "ok"); $("#updGo").disabled = true; installUpdate(); };
   $("#autoUpd").onclick = async () => {

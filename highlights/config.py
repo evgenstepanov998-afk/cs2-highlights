@@ -11,8 +11,11 @@ import shutil
 import subprocess
 import sys
 
-APP_NAME = "Killcam"
-VERSION = "2.0.1"
+from .channel import CHANNEL
+
+DEMO = CHANNEL == "demo"  # the test build: its own name, folders and no auto-update
+APP_NAME = "Killcam Demo" if DEMO else "Killcam"
+VERSION = "2.0.2"
 REPO = "killcam-app/killcam"
 # Discord webhook of the private bug-report channel; lives in the git-ignored secrets_local.py
 # (empty = the report is saved to the Desktop instead)
@@ -38,7 +41,7 @@ LOCAL = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
 DATA = os.path.join(_documents(), APP_NAME)
 LIBRARY = os.path.join(DATA, "library")
 WORK = os.path.join(DATA, "work")
-TOOLS = os.path.join(LOCAL, APP_NAME, "tools")
+TOOLS = os.path.join(LOCAL, "Killcam", "tools")  # HLAE + ffmpeg are shared by both builds
 CONFIG = os.path.join(DATA, "settings.json")
 LOG = os.path.join(LOCAL, APP_NAME, "log.txt")
 
@@ -113,6 +116,16 @@ def find_cs2(steam):
         if os.path.exists(os.path.join(d, "game", "bin", "win64", "cs2.exe")):
             return d
     return None
+
+
+def cs2_patch(cfg):
+    """Installed CS2 version in the same form demos store it: PatchVersion=1.41.9.5 → "14195"."""
+    try:
+        with open(os.path.join(cfg["csgo_dir"], "steam.inf"), encoding="utf-8", errors="ignore") as f:
+            m = re.search(r"PatchVersion=([\d.]+)", f.read())
+        return m.group(1).replace(".", "") if m else None
+    except (OSError, KeyError):
+        return None
 
 
 def pick_encoder(ffmpeg):

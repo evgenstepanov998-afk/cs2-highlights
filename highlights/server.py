@@ -14,7 +14,7 @@ import traceback
 import urllib.parse
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
-from . import config, demo, plan, recorder, setup, stealth, support
+from . import config, demo, export, plan, recorder, setup, stealth, support
 
 TOKEN = secrets.token_urlsafe(24)
 JOB = {"running": False, "log": [], "done": 0, "total": 0, "result": None, "error": None,
@@ -29,15 +29,22 @@ def job_log(msg):
     print(msg)
 
 
-def start_job(path, steamid):
+def max_players():
+    return recorder.MAX_PLAYERS if config.DEMO else 1
+
+
+def start_job(path, steamids):
+    if isinstance(steamids, str):
+        steamids = [steamids]
+    steamids = steamids[:max_players()]
     info = ANALYZED.get(path)
-    me = next((p for p in info["players"] if p["steamid"] == steamid), None) if info else None
+    names = [p["name"] for sid in steamids for p in (info["players"] if info else []) if p["steamid"] == sid]
     JOB.update(running=True, log=[], done=0, total=0, result=None, error=None, phase="launch",
-               player=me and me["name"], map=info and info["map"])
+               player=", ".join(names) or None, map=info and info["map"])
 
     def work():
         try:
-            meta = recorder.run(path, steamid, log=job_log,
+            meta = recorder.run(path, steamids, log=job_log,
                                 progress=lambda d, t: JOB.update(done=d, total=t),
                                 phase=lambda name: JOB.update(phase=name))
             JOB["result"] = meta["key"]
@@ -50,6 +57,43 @@ def start_job(path, steamid):
             traceback.print_exc()
         finally:
             JOB["running"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+
+
+SOUND = {"pending": False, "state": "idle"}  # CS2 left muted by Killcam 2.0.0–2.0.1
+
+
+def check_sound():
+    """Startup: if Windows has CS2 saved as muted, clear the saved flag and remember that the
+    running audio service still needs a live unmute (see recorder.fix_sound)."""
+    try:
+        if stealth.repair_cs2_mute():
+            config.save(sound_fix_pending=True)
+            print("CS2 was left muted in the Windows mixer")
+    except Exception:
+        traceback.print_exc()
+    cfg = config.load()
+    if not cfg.get("sound_check_done"):
+        # Windows saves the mute to the registry only some time later, so the check above can
+        # miss it: anyone who recorded with 2.0.0–2.0.1 is asked once. New installs never are.
+        recorded = any(os.path.exists(os.path.join(config.LIBRARY, d, "meta.json"))
+                       for d in (os.listdir(config.LIBRARY) if os.path.isdir(config.LIBRARY) else []))
+        config.save(sound_check_done=True, sound_fix_pending=bool(cfg.get("sound_fix_pending") or recorded))
+    SOUND["pending"] = bool(config.load().get("sound_fix_pending"))
+
+
+def start_sound_fix():
+    SOUND["state"] = "fixing"
+
+    def work():
+        try:
+            recorder.fix_sound(config.load(), print)
+            config.save(sound_fix_pending=False)
+            SOUND.update(pending=False, state="done")
+        except Exception:
+            traceback.print_exc()
+            SOUND["state"] = "error"
 
     threading.Thread(target=work, daemon=True).start()
 
@@ -130,7 +174,9 @@ def settings_view():
     return {"lang": cfg["lang"], "fps": cfg["fps"], "encoder": cfg.get("encoder"),
             "cs2_dir": cfg.get("cs2_dir"), "data_dir": config.DATA, "version": config.VERSION,
             "repo": config.REPO, "auto_update": cfg.get("auto_update", True),
-            "reports_to_discord": bool(config.REPORT_WEBHOOK)}
+            "reports_to_discord": bool(config.REPORT_WEBHOOK),
+            "channel": config.CHANNEL, "max_players": max_players(),
+            "discord_webhook_set": bool(cfg.get("discord_webhook"))}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -185,6 +231,13 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(settings_view())
             if path == "/api/update":
                 return self._json(support.UPDATE)
+            if path == "/api/sound":
+                return self._json(SOUND)
+            if path == "/api/export":
+                eid = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("id", [""])[0]
+                st = export.EXPORTS.get(eid)
+                return self._json({k: v for k, v in st.items() if k != "path"} if st else {"error": "not found"},
+                                  200 if st else 404)
             return self._json({"error": "not found"}, 404)
         if "Range" in self.headers and path.endswith(".mp4"):
             return self._range()
@@ -205,10 +258,13 @@ class Handler(SimpleHTTPRequestHandler):
                     return self._json({"error": "not_ready"}, 409)
                 if JOB["running"]:
                     return self._json({"error": "busy"}, 409)
-                start_job(data["path"], data["steamid"])
+                start_job(data["path"], data.get("steamids") or data["steamid"])
                 return self._json({"ok": True})
             if self.path == "/api/settings":
-                allowed = {k: data[k] for k in ("lang", "fps", "auto_update") if k in data}
+                allowed = {k: data[k] for k in ("lang", "fps", "auto_update", "discord_webhook") if k in data}
+                hook = allowed.get("discord_webhook")
+                if hook is not None and hook and not export.valid_webhook(hook):
+                    return self._json({"error": "bad_webhook"}, 400)
                 if "fps" in allowed and allowed["fps"] not in (60, 144):
                     allowed.pop("fps")
                 config.save(**allowed)
@@ -222,6 +278,28 @@ class Handler(SimpleHTTPRequestHandler):
                     return self._json({"error": "busy"}, 409)
                 support.install_update(lambda: (shutdown_cleanup(), os._exit(0)))
                 return self._json({"ok": True})
+            if self.path == "/api/export":
+                if not config.DEMO:
+                    return self._json({"error": "not found"}, 404)
+                key = str(data.get("key", ""))
+                clips = [str(c) for c in data.get("clips", [])][:60]
+                if not key or os.sep in key or "/" in key or not clips:
+                    return self._json({"error": "bad_request"}, 400)
+                text = None
+                if data.get("discord"):
+                    if not config.load().get("discord_webhook"):
+                        return self._json({"error": "no_webhook"}, 409)
+                    text = str(data.get("text") or "")[:1500]
+                return self._json({"id": export.start(key, clips, bool(data.get("vertical")), text)})
+            if self.path == "/api/sound/fix":
+                if JOB["running"] or SOUND["state"] == "fixing":
+                    return self._json({"error": "busy"}, 409)
+                start_sound_fix()
+                return self._json(SOUND)
+            if self.path == "/api/sound/dismiss":
+                config.save(sound_fix_pending=False)
+                SOUND.update(pending=False, state="idle")
+                return self._json(SOUND)
             if self.path == "/api/delete":
                 delete_recording(data.get("key"))
                 return self._json({"ok": True})
@@ -327,12 +405,13 @@ def start():
 def shutdown_cleanup():
     """Stop a running recording (closing CS2) and put the user's graphics back."""
     if JOB["running"]:
-        subprocess.run(["taskkill", "/F", "/IM", "cs2.exe"], capture_output=True, creationflags=config.NO_WINDOW)
+        stealth.kill_own()  # only the CS2 Killcam started, never one the user is playing
         stealth.wait_cs2_exit(10)
         _mark_stopped()
     cfg = config.load()
     if cfg.get("steam_dir"):
         stealth.restore_video(cfg["steam_dir"])
+    export.cleanup()
 
 
 def _mark_stopped():

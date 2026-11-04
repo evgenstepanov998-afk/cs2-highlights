@@ -4,8 +4,8 @@
 <p align="center"><b>Каждый фраг — своими глазами.</b><br>Хайлайты из демок CS2: все убийства и смерти игрока от первого лица, повтор глазами убийцы, по раундам.</p>
 
 <p align="center">
-  <a href="https://github.com/evgenstepanov998-afk/killcam/releases/latest/download/KillcamSetup.exe"><b>⬇ Скачать для Windows</b></a> ·
-  <a href="https://evgenstepanov998-afk.github.io/killcam/">Сайт</a> ·
+  <a href="https://github.com/killcam-app/killcam/releases/latest/download/KillcamSetup.exe"><b>⬇ Скачать для Windows</b></a> ·
+  <a href="https://killcam-app.github.io/killcam/">Сайт</a> ·
   <a href="https://discord.gg/SJjt7sdMVn">Discord</a>
 </p>
 

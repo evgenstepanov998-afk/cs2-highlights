@@ -12,8 +12,8 @@ import subprocess
 import sys
 
 APP_NAME = "Killcam"
-VERSION = "2.0.0"
-REPO = "evgenstepanov998-afk/killcam"
+VERSION = "2.0.1"
+REPO = "killcam-app/killcam"
 # Discord webhook of the private bug-report channel; lives in the git-ignored secrets_local.py
 # (empty = the report is saved to the Desktop instead)
 try:

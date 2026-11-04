@@ -1,5 +1,5 @@
 ﻿; Killcam installer (Inno Setup 6). Per-user install, no admin rights needed.
-#define AppVersion "2.0.0"
+#define AppVersion "2.0.1"
 #ifndef AppDir
   #define AppDir "dist\Killcam"
 #endif
@@ -10,7 +10,7 @@ AppName=Killcam
 AppVersion={#AppVersion}
 AppVerName=Killcam {#AppVersion}
 AppPublisher=Killcam
-AppPublisherURL=https://github.com/evgenstepanov998-afk/killcam
+AppPublisherURL=https://github.com/killcam-app/killcam
 DefaultDirName={localappdata}\Programs\Killcam
 DefaultGroupName=Killcam
 DisableProgramGroupPage=yes

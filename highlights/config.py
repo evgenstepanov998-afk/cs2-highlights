@@ -13,7 +13,7 @@ import sys
 # Set at build time: the public site this app belongs to.
 SITE_URL = "https://evgenstepanov998-afk.github.io/cs2-highlights/"
 RELEASES_URL = "https://github.com/evgenstepanov998-afk/cs2-highlights/releases/latest"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW: no console flashes from helper processes
 

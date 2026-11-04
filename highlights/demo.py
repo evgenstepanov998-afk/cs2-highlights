@@ -24,6 +24,7 @@ def unpack_if_gz(path, work_dir):
         return path
     os.makedirs(work_dir, exist_ok=True)
     out = os.path.join(work_dir, os.path.basename(path).rsplit(".", 1)[0])
+    MATCH_TIME[os.path.abspath(out)] = _source_time(path)
     if not os.path.exists(out):
         tmp = out + ".part"
         with open(tmp, "wb") as dst:
@@ -64,6 +65,29 @@ def peek_map(path):
         if 3 <= n <= len(m.group(1)):
             return m.group(1)[:n].decode()
     return None
+
+
+MATCH_TIME = {}  # unpacked .dem -> best known match time of the original file
+
+
+def _source_time(path):
+    """When the match was played, as close as the file lets us tell: gzip keeps the original
+    file time in its header; otherwise the file's own modified time (CS2 replays are written
+    right at the end of the match; downloaded archives carry the download time)."""
+    if path.lower().endswith(".gz"):
+        try:
+            with open(path, "rb") as f:
+                head = f.read(8)
+            t = int.from_bytes(head[4:8], "little")
+            if head[:2] == b"\x1f\x8b" and t > 1_500_000_000:
+                return t
+        except OSError:
+            pass
+    return int(os.path.getmtime(path))
+
+
+def match_time(path):
+    return MATCH_TIME.get(os.path.abspath(path)) or _source_time(path)
 
 
 def demo_id(path):
@@ -140,15 +164,42 @@ def analyze(path):
         })
 
     snap = p.parse_ticks(["team_num", "name"], ticks=[last_tick])
+
+    # Score from each player's point of view: sides swap at half time, so check the side
+    # they were on at the end of every round against that round's winner.
+    side_at = {}
+    try:
+        sides = p.parse_ticks(["team_num"], ticks=[max(r["start"] + 1, r["end"] - 1) for r in rounds])
+        tick_round = {max(r["start"] + 1, r["end"] - 1): r["number"] for r in rounds}
+        for _, row in sides.iterrows():
+            side_at[(str(row["steamid"]), tick_round.get(int(row["tick"])))] = _int(row["team_num"])
+    except Exception:
+        pass
+
+    def score_of(sid):
+        won = lost = 0
+        for r in rounds:
+            side = side_at.get((sid, r["number"]))
+            if not r["winner"] or side not in (2, 3):
+                continue
+            if r["winner"].upper().startswith("C") == (side == 3):
+                won += 1
+            else:
+                lost += 1
+        return won, lost
+
     players = []
     for _, row in snap.iterrows():
         sid = str(row["steamid"])
+        won, lost = score_of(sid)
         players.append({
             "steamid": sid,
             "name": row["name"],
             "team": _int(row["team_num"]),
             "kills": sum(1 for e in events if e["attacker"] == sid and e["victim"] != sid),
             "deaths": sum(1 for e in events if e["victim"] == sid),
+            "won": won,
+            "lost": lost,
         })
     players.sort(key=lambda x: (x["team"], -x["kills"]))
 

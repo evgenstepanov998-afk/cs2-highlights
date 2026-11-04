@@ -1,24 +1,30 @@
 """Where things live and how this PC is set up (Steam, CS2, video encoder).
 
-Program files (site) ship inside the exe; tools go to %LOCALAPPDATA%\\CS2Highlights;
-clips and settings go to Documents\\CS2 Highlights so the user can find them.
+UI files ship inside the app; tools go to %LOCALAPPDATA%\\Killcam; clips and settings
+go to Documents\\Killcam so the user can find them.
 """
 import ctypes
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
-# Set at build time: the public site this app belongs to.
-SITE_URL = "https://evgenstepanov998-afk.github.io/cs2-highlights/"
-RELEASES_URL = "https://github.com/evgenstepanov998-afk/cs2-highlights/releases/latest"
-VERSION = "1.1.0"
+APP_NAME = "Killcam"
+VERSION = "2.0.0"
+REPO = "evgenstepanov998-afk/killcam"
+# Discord webhook of the private bug-report channel; lives in the git-ignored secrets_local.py
+# (empty = the report is saved to the Desktop instead)
+try:
+    from .secrets_local import REPORT_WEBHOOK
+except ImportError:
+    REPORT_WEBHOOK = ""
 
 NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW: no console flashes from helper processes
 
 BUNDLE = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SITE = os.path.join(BUNDLE, "site")
+UI = os.path.join(BUNDLE, "ui")
 
 
 def _documents():
@@ -28,19 +34,21 @@ def _documents():
     return os.path.join(os.path.expanduser("~"), "Documents")
 
 
-DATA = os.path.join(_documents(), "CS2 Highlights")
+LOCAL = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+DATA = os.path.join(_documents(), APP_NAME)
 LIBRARY = os.path.join(DATA, "library")
 WORK = os.path.join(DATA, "work")
-TOOLS = os.path.join(os.environ.get("LOCALAPPDATA", DATA), "CS2Highlights", "tools")
-CONFIG = os.path.join(DATA, "config.json")
-LOG = os.path.join(DATA, "log.txt")
+TOOLS = os.path.join(LOCAL, APP_NAME, "tools")
+CONFIG = os.path.join(DATA, "settings.json")
+LOG = os.path.join(LOCAL, APP_NAME, "log.txt")
 
 DEFAULTS = {
     "width": 1920,
     "height": 1080,
     "fps": 60,
+    "lang": None,  # None = follow Windows
+    "auto_update": True,
     "netcon_port": 2121,
-    "web_port": 8765,
 }
 
 ENCODERS = [
@@ -50,6 +58,31 @@ ENCODERS = [
     ("h264_qsv", "-c:v h264_qsv -preset veryfast -global_quality 23 -pix_fmt nv12"),
     ("libx264", "-c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p"),
 ]
+
+
+def migrate_old_install():
+    """Earlier builds were called "CS2 Highlights": keep their clips and tools."""
+    old_data = os.path.join(_documents(), "CS2 Highlights")
+    old_tools = os.path.join(LOCAL, "CS2Highlights", "tools")
+    try:
+        if os.path.isdir(os.path.join(old_data, "library")) and not os.path.exists(LIBRARY):
+            os.makedirs(DATA, exist_ok=True)
+            shutil.move(os.path.join(old_data, "library"), LIBRARY)
+            old_cfg = os.path.join(old_data, "config.json")
+            if os.path.exists(old_cfg) and not os.path.exists(CONFIG):
+                shutil.copyfile(old_cfg, CONFIG)
+            shutil.rmtree(old_data, ignore_errors=True)
+        if os.path.isdir(old_tools) and not os.path.exists(TOOLS):
+            os.makedirs(os.path.dirname(TOOLS), exist_ok=True)
+            shutil.move(old_tools, TOOLS)
+            shutil.rmtree(os.path.dirname(old_tools), ignore_errors=True)
+    except OSError:
+        pass
+
+
+def windows_lang():
+    lang_id = ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF
+    return "ru" if lang_id in (0x19, 0x22, 0x23) else "en"  # ru, uk, be → Russian UI
 
 
 def find_steam():
@@ -94,8 +127,11 @@ def pick_encoder(ffmpeg):
 
 def _read():
     if os.path.exists(CONFIG):
-        with open(CONFIG, encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(CONFIG, encoding="utf-8") as f:
+                return json.load(f)
+        except ValueError:
+            pass
     return {}
 
 
@@ -110,6 +146,7 @@ def save(**values):
 def load():
     cfg = dict(DEFAULTS)
     cfg.update(_read())
+    cfg["lang"] = cfg.get("lang") or windows_lang()
     cfg.setdefault("hlae_dir", os.path.join(TOOLS, "hlae"))
     if not cfg.get("cs2_dir"):
         steam = find_steam()

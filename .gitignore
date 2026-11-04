@@ -1,0 +1,6 @@
+highlights/secrets_local.py
+tools/discord_ids.json
+work/
+build/
+dist/
+__pycache__/

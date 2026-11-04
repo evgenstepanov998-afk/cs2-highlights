@@ -1,5 +1,8 @@
 demoparser2
 pandas
+polars
+pyarrow
 zstandard
 pycaw
 comtypes
+pywebview

@@ -1,44 +1,51 @@
-"""Local helper: API + clips for the site (public GitHub Pages page or the bundled copy).
+"""Local API + clip files for the Killcam window.
 
-Only the site's own origin (and localhost) may call it. It exits by itself when nobody
-has had the site open for a while and nothing is being recorded.
+Bound to 127.0.0.1 on a random port, and every request must carry the per-launch token,
+so nothing else on the PC (or any web page) can drive recordings or read the library.
 """
 import json
 import os
+import secrets
+import shutil
 import subprocess
-import sys
 import threading
 import time
 import traceback
 import urllib.parse
-import urllib.request
-import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
-from . import config, demo, plan, recorder, setup, stealth
+from . import config, demo, plan, recorder, setup, stealth, support
 
-JOB = {"running": False, "log": [], "done": 0, "total": 0, "result": None, "error": None}
+TOKEN = secrets.token_urlsafe(24)
+JOB = {"running": False, "log": [], "done": 0, "total": 0, "result": None, "error": None,
+       "phase": None, "player": None, "map": None}
 ANALYZED = {}
 MAPS = {}  # (path, mtime) -> map name, so the list doesn't re-read files on every refresh
-LAST_SEEN = [time.time()]
-IDLE_EXIT = 120  # seconds without an open site tab before the helper quits
 
 
 def job_log(msg):
     JOB["log"].append(f"{time.strftime('%H:%M:%S')}  {msg}")
+    JOB["log"] = JOB["log"][-200:]
     print(msg)
 
 
 def start_job(path, steamid):
-    JOB.update(running=True, log=[], done=0, total=0, result=None, error=None)
+    info = ANALYZED.get(path)
+    me = next((p for p in info["players"] if p["steamid"] == steamid), None) if info else None
+    JOB.update(running=True, log=[], done=0, total=0, result=None, error=None, phase="launch",
+               player=me and me["name"], map=info and info["map"])
 
     def work():
         try:
             meta = recorder.run(path, steamid, log=job_log,
-                                progress=lambda d, t: JOB.update(done=d, total=t))
+                                progress=lambda d, t: JOB.update(done=d, total=t),
+                                phase=lambda name: JOB.update(phase=name))
             JOB["result"] = meta["key"]
+        except recorder.GameError as e:
+            JOB["error"] = {"code": e.code, "detail": e.detail}
+            job_log(f"Ошибка: {e}")
         except Exception as e:
-            JOB["error"] = str(e)
+            JOB["error"] = {"code": "unknown", "detail": str(e)}
             job_log("Ошибка: " + str(e))
             traceback.print_exc()
         finally:
@@ -65,28 +72,77 @@ def find_demos():
                 if not inner:
                     continue
                 full = os.path.join(full, inner[0])
-            if os.path.getsize(full) > 1024 * 1024:
+            try:
+                size = os.path.getsize(full)
+            except OSError:
+                continue
+            if size > 1024 * 1024:
                 mtime = os.path.getmtime(full)
                 if (full, mtime) not in MAPS:
                     MAPS[(full, mtime)] = demo.peek_map(full)
                 found.append({"path": full, "name": name, "map": MAPS[(full, mtime)],
-                              "size_mb": round(os.path.getsize(full) / 2**20),
+                              "size_mb": round(size / 2**20),
                               "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime))})
     found.sort(key=lambda x: x["modified"], reverse=True)
     return found
 
 
-def allowed_origins(port):
-    site = urllib.parse.urlsplit(config.SITE_URL)
-    return {f"{site.scheme}://{site.netloc}", f"http://localhost:{port}", f"http://127.0.0.1:{port}"}
+def demo_info(path):
+    """Players with K/D and how long their highlights will take, for the player picker."""
+    path = demo.unpack_if_gz(path.strip('"'), os.path.join(config.WORK, "demos"))
+    if path not in ANALYZED:
+        ANALYZED[path] = demo.analyze(path)
+    info = ANALYZED[path]
+    players = []
+    for p in info["players"]:
+        clips = plan.build(info, p["steamid"])
+        players.append(dict(p, video_seconds=round(plan.total_seconds(clips)),
+                            clips=sum(1 for c in clips if not c.get("inside_death"))))
+    return {"path": path, "map": info["map"], "rounds": len(info["rounds"]), "players": players}
+
+
+def read_index():
+    path = os.path.join(config.LIBRARY, "index.json")
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            items = json.load(f)
+    except ValueError:
+        return []
+    # an entry whose folder vanished (deleted by hand) shouldn't show up
+    return [i for i in items if os.path.isdir(os.path.join(config.LIBRARY, i["key"]))]
+
+
+def delete_recording(key):
+    if not key or os.sep in key or "/" in key or key.startswith("."):
+        raise ValueError("bad key")
+    if JOB["running"] and JOB.get("result") == key:
+        raise ValueError("busy")
+    shutil.rmtree(os.path.join(config.LIBRARY, key), ignore_errors=True)
+    items = [i for i in read_index() if i["key"] != key]
+    with open(os.path.join(config.LIBRARY, "index.json"), "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=1)
+
+
+def settings_view():
+    cfg = config.load()
+    return {"lang": cfg["lang"], "fps": cfg["fps"], "encoder": cfg.get("encoder"),
+            "cs2_dir": cfg.get("cs2_dir"), "data_dir": config.DATA, "version": config.VERSION,
+            "repo": config.REPO, "auto_update": cfg.get("auto_update", True),
+            "reports_to_discord": bool(config.REPORT_WEBHOOK)}
 
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
-        super().__init__(*a, directory=config.SITE, **kw)
+        super().__init__(*a, directory=config.UI, **kw)
 
     def log_message(self, *a):
         pass
+
+    def _authorized(self):
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        return secrets.compare_digest(self.headers.get("X-Killcam-Token") or (q.get("t") or [""])[0], TOKEN)
 
     def translate_path(self, path):
         path = urllib.parse.unquote(path.split("?")[0])
@@ -97,30 +153,10 @@ class Handler(SimpleHTTPRequestHandler):
             return os.path.join(config.LIBRARY, rel)
         return super().translate_path(path)
 
-    def _origin_ok(self):
-        origin = self.headers.get("Origin")
-        return origin is None or origin in allowed_origins(self.server.server_port)
-
     def end_headers(self):
-        origin = self.headers.get("Origin")
-        if origin and origin in allowed_origins(self.server.server_port):
-            self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Vary", "Origin")
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         super().end_headers()
-
-    def do_OPTIONS(self):
-        # CORS + Chrome's private-network preflight for an https page calling localhost
-        if not self._origin_ok():
-            self.send_response(403)
-            self.end_headers()
-            return
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Private-Network", "true")
-        self.send_header("Access-Control-Max-Age", "600")
-        self.end_headers()
 
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -132,76 +168,68 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
-        if path.startswith("/api/"):
-            if not self._origin_ok():
+        # the UI shell itself is public (it's just our own HTML); data needs the token
+        if path.startswith("/api/") or path.startswith("/library/"):
+            if not self._authorized():
                 return self._json({"error": "forbidden"}, 403)
-            LAST_SEEN[0] = time.time()
-            if path == "/api/ping":
-                return self._json({"app": "cs2-highlights", "version": config.VERSION})
+        if path.startswith("/api/"):
             if path == "/api/setup":
                 return self._json(setup.status())
             if path == "/api/job":
-                return self._json({k: JOB[k] for k in ("running", "log", "done", "total", "result", "error")})
+                return self._json({k: JOB[k] for k in JOB})
             if path == "/api/demos":
                 return self._json(find_demos())
+            if path == "/api/library":
+                return self._json(read_index())
+            if path == "/api/settings":
+                return self._json(settings_view())
+            if path == "/api/update":
+                return self._json(support.UPDATE)
             return self._json({"error": "not found"}, 404)
-        if path.endswith(".mp4") and "download=1" in self.path:
-            return self._download()
         if "Range" in self.headers and path.endswith(".mp4"):
             return self._range()
         return super().do_GET()
 
-    def _download(self):
-        path = self.translate_path(self.path)
-        if not os.path.isfile(path):
-            return self.send_error(404)
-        # clip name for the saved file: <player>_<map>_<clip>.mp4
-        parts = os.path.normpath(path).split(os.sep)
-        name = f"cs2_{parts[-2]}_{parts[-1]}"
-        self.send_response(200)
-        self.send_header("Content-Type", "video/mp4")
-        self.send_header("Content-Length", str(os.path.getsize(path)))
-        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
-        self.end_headers()
-        with open(path, "rb") as f:
-            try:
-                while chunk := f.read(1 << 20):
-                    self.wfile.write(chunk)
-            except (ConnectionResetError, BrokenPipeError):
-                pass
-
     def do_POST(self):
-        if not self._origin_ok():
+        if not self._authorized():
             return self._json({"error": "forbidden"}, 403)
-        LAST_SEEN[0] = time.time()
         data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
         try:
             if self.path == "/api/setup/accept":
                 setup.accept()
                 return self._json(setup.status())
             if self.path == "/api/analyze":
-                path = demo.unpack_if_gz(data["path"].strip('"'), os.path.join(config.WORK, "demos"))
-                if path not in ANALYZED:
-                    ANALYZED[path] = demo.analyze(path)
-                info = ANALYZED[path]
-                players = []
-                for p in info["players"]:
-                    clips = plan.build(info, p["steamid"])
-                    players.append(dict(p, video_seconds=round(plan.total_seconds(clips))))
-                return self._json({"path": path, "map": info["map"], "rounds": len(info["rounds"]), "players": players})
+                return self._json(demo_info(data["path"]))
             if self.path == "/api/record":
                 if not setup.status()["ready"]:
-                    return self._json({"error": "Сначала закончи установку"}, 409)
+                    return self._json({"error": "not_ready"}, 409)
                 if JOB["running"]:
-                    return self._json({"error": "Уже идёт запись"}, 409)
+                    return self._json({"error": "busy"}, 409)
                 start_job(data["path"], data["steamid"])
                 return self._json({"ok": True})
-            if self.path == "/api/quit":
-                self._json({"ok": True})
-                threading.Thread(target=shutdown, daemon=True).start()
-                return
+            if self.path == "/api/settings":
+                allowed = {k: data[k] for k in ("lang", "fps", "auto_update") if k in data}
+                if "fps" in allowed and allowed["fps"] not in (60, 144):
+                    allowed.pop("fps")
+                config.save(**allowed)
+                return self._json(settings_view())
+            if self.path == "/api/report":
+                return self._json(support.send_report(str(data.get("comment", ""))[:4000], dict(JOB)))
+            if self.path == "/api/update/check":
+                return self._json(support.check_updates())
+            if self.path == "/api/update/install":
+                if JOB["running"]:
+                    return self._json({"error": "busy"}, 409)
+                support.install_update(lambda: (shutdown_cleanup(), os._exit(0)))
+                return self._json({"ok": True})
+            if self.path == "/api/delete":
+                delete_recording(data.get("key"))
+                return self._json({"ok": True})
             if self.path == "/api/open-folder":
-                os.startfile(os.path.join(config.LIBRARY, data.get("key", "")) if data.get("key") else config.LIBRARY)
+                key = data.get("key")
+                target = os.path.join(config.LIBRARY, key) if key and os.sep not in key else config.LIBRARY
+                os.makedirs(target, exist_ok=True)
+                os.startfile(target)
                 return self._json({"ok": True})
         except Exception as e:
             traceback.print_exc()
@@ -233,67 +261,71 @@ class Handler(SimpleHTTPRequestHandler):
                         break
                     self.wfile.write(chunk)
                     left -= len(chunk)
-            except (ConnectionResetError, BrokenPipeError):
+            except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
                 pass
 
 
-def _watchdog():
-    """Quit when the site has been closed for IDLE_EXIT seconds and nothing is running."""
-    while True:
-        time.sleep(10)
-        busy = JOB["running"] or setup.STATE["running"]
-        if busy:
-            LAST_SEEN[0] = time.time()
-        elif time.time() - LAST_SEEN[0] > IDLE_EXIT:
-            print("Сайт закрыт — выключаюсь.")
-            os._exit(0)
-
-
-def site_url(port):
-    if "REPLACE_OWNER" in config.SITE_URL:  # not published yet: use the bundled copy
-        return f"http://localhost:{port}/"
-    return config.SITE_URL
-
-
-def _already_running(port):
-    try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/ping", timeout=2) as r:
-            return json.load(r).get("app") == "cs2-highlights"
-    except Exception:
-        return False
-
-
-def serve(open_browser=True, with_window=True):
-    os.makedirs(config.LIBRARY, exist_ok=True)
-    if getattr(sys, "frozen", False):  # windowed exe: keep a log instead of a console
-        sys.stdout = sys.stderr = open(config.LOG, "a", encoding="utf-8", buffering=1)
+def _find_demo_file(name):
+    """The original demo (archive first: its time is closest to the match), not our unpacked copy."""
     cfg = config.load()
-    port = cfg["web_port"]
-    try:
-        srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    except OSError:
-        if _already_running(port):  # second launch: just bring the site up again
-            if open_browser:
-                webbrowser.open(site_url(port))
-            return
-        raise
-    if cfg.get("steam_dir"):
-        stealth.restore_video(cfg["steam_dir"])  # in case the last recording was cut off mid-way
-    threading.Thread(target=_watchdog, daemon=True).start()
-    print(time.strftime("%Y-%m-%d %H:%M:%S"), "CS2 Highlights", config.VERSION, "на порту", port)
-    if open_browser:
-        webbrowser.open(site_url(port))
-    if not with_window:
-        srv.serve_forever()
-        return
+    dirs = [os.path.join(os.path.expanduser("~"), "Downloads")]
+    if cfg.get("cs2_dir"):
+        dirs.append(os.path.join(cfg["csgo_dir"], "replays"))
+    for d in dirs:
+        for cand in (os.path.join(d, name + ".gz"), os.path.join(d, name + ".zst"),
+                     os.path.join(d, name), os.path.join(d, name, name)):
+            if os.path.isfile(cand):
+                return cand
+    cand = os.path.join(config.WORK, "demos", name)
+    return cand if os.path.isfile(cand) else None
+
+
+def backfill():
+    """Recordings made by older versions get a picture, the score and the match date."""
+    cfg = config.load()
+    _mark_stopped()  # nothing records at startup: a "recording" badge is left over from a crash
+    for item in read_index():
+        meta_path = os.path.join(config.LIBRARY, item["key"], "meta.json")
+        try:
+            with open(meta_path, encoding="utf-8") as f:
+                meta = json.load(f)
+            changed = False
+            if not meta.get("thumb"):
+                first = next((c["file"] for c in meta["clips"] if c.get("file")), None)
+                if first:
+                    meta["thumb"] = recorder.make_thumb(cfg["ffmpeg"], os.path.join(config.LIBRARY, item["key"], first),
+                                                        os.path.join(config.LIBRARY, item["key"]), meta["map"])
+                    changed = True
+            if "score" not in meta or meta.get("time_v") != 2:
+                path = _find_demo_file(meta["demo"])
+                if path:
+                    meta["time_v"] = 2  # v1 of this backfill took the time from the unpacked copy
+                    info = demo.analyze(demo.unpack_if_gz(path, os.path.join(config.WORK, "demos")))
+                    me = next((p for p in info["players"] if p["steamid"] == meta["player"]["steamid"]), None)
+                    if me:
+                        meta["score"] = [me["won"], me["lost"]]
+                        meta["match_time"] = demo.match_time(path)
+                        changed = True
+            if changed:
+                with open(meta_path, "w", encoding="utf-8") as f:
+                    json.dump(meta, f, ensure_ascii=False, indent=1)
+                recorder.update_index(dict(item, thumb=meta.get("thumb"), score=meta.get("score"),
+                                           match_time=meta.get("match_time")))
+        except Exception:
+            traceback.print_exc()
+
+
+def start():
+    """Start the API on a free localhost port; returns the base URL."""
+    os.makedirs(config.LIBRARY, exist_ok=True)
+    threading.Thread(target=backfill, daemon=True).start()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    from . import ui
-    ui.run(JOB, site_url(port), shutdown)
+    return f"http://127.0.0.1:{srv.server_port}"
 
 
-def shutdown():
-    """Quit for real: stop a running recording (closing CS2), put the user's graphics back."""
-    print("Выключаюсь по кнопке.")
+def shutdown_cleanup():
+    """Stop a running recording (closing CS2) and put the user's graphics back."""
     if JOB["running"]:
         subprocess.run(["taskkill", "/F", "/IM", "cs2.exe"], capture_output=True, creationflags=config.NO_WINDOW)
         stealth.wait_cs2_exit(10)
@@ -301,14 +333,14 @@ def shutdown():
     cfg = config.load()
     if cfg.get("steam_dir"):
         stealth.restore_video(cfg["steam_dir"])
-    os._exit(0)
 
 
 def _mark_stopped():
     """Recordings cut off by quitting keep their finished clips, just not the 'recording' badge."""
-    for path in (os.path.join(config.LIBRARY, "index.json"),
-                 *[os.path.join(config.LIBRARY, d, "meta.json") for d in os.listdir(config.LIBRARY)
-                   if os.path.isdir(os.path.join(config.LIBRARY, d))]):
+    paths = [os.path.join(config.LIBRARY, "index.json")]
+    paths += [os.path.join(config.LIBRARY, d, "meta.json") for d in os.listdir(config.LIBRARY)
+              if os.path.isdir(os.path.join(config.LIBRARY, d))]
+    for path in paths:
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)

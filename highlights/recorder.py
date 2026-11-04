@@ -18,12 +18,15 @@ from . import config, demo, plan, stealth
 
 TICK = demo.TICKRATE
 PREROLL = 40  # ticks played before recording so the seek and camera settle
-BROKEN_DEMO = ("Демка не открывается в текущей версии CS2 (она записана до последнего обновления игры). "
-               "Возьми демку матча, сыгранного после обновления, или дождись патча от Valve.")
 
 
 class GameError(RuntimeError):
-    pass
+    """`code` is a stable id the app translates; `detail` is extra context for the log."""
+
+    def __init__(self, code, detail=""):
+        super().__init__(f"{code}: {detail}" if detail else code)
+        self.code = code
+        self.detail = detail
 
 
 class NetCon:
@@ -43,7 +46,7 @@ class NetCon:
                 return
             except OSError:
                 time.sleep(1)
-        raise GameError("CS2 не открыл консольный порт — игра не запустилась?")
+        raise GameError("cs2_no_console")
 
     def send(self, *cmds):
         for c in cmds:
@@ -57,7 +60,7 @@ class NetCon:
                 self.buf = self.buf[idx + len(marker):]
                 return True
             if b"failed to deserialize entity data" in self.buf:
-                raise GameError(BROKEN_DEMO)
+                raise GameError("broken_demo")
             try:
                 chunk = self.sock.recv(65536)
             except socket.timeout:
@@ -65,8 +68,7 @@ class NetCon:
             except OSError:
                 chunk = b""
             if not chunk:
-                raise GameError(BROKEN_DEMO if b"Demo playback finished" in self.buf
-                                else "CS2 закрылась во время записи")
+                raise GameError("broken_demo" if b"Demo playback finished" in self.buf else "cs2_closed")
             self.buf = (self.buf + chunk)[-200000:]
             self.full.append(chunk)
         return False
@@ -102,10 +104,10 @@ def stage_demo(cfg, dem_path, did):
 
 def launch(cfg, log):
     if cs2_running():
-        raise GameError("Закрой CS2 перед записью — её нужно перезапустить через HLAE.")
+        raise GameError("cs2_running")
     for key in ("hlae_exe", "hook_dll", "cs2_exe", "ffmpeg"):
         if not os.path.exists(cfg[key]):
-            raise GameError(f"Не найден файл: {cfg[key]}")
+            raise GameError("missing_file", cfg[key])
     cmdline = (f"-steam -insecure +sv_lan 1 -console -novid -sw -noborder -w {cfg['width']} -h {cfg['height']} "
                f"-afxDisableSteamStorage -afxFixNetCon -netconport {cfg['netcon_port']} "
                "+fps_max 0 +fps_max_ui 0 +fps_max_tools 0 +mat_vsync 0 +demo_ui_mode 0")
@@ -159,11 +161,11 @@ def record_segment(con, seg, n, raw_dir, fps):
     t = time.time()
     if not con.wait_for(f"FH_DONE_{n}", timeout=90):
         con.send("mirv_streams record end", "demo_pause")
-        raise GameError(f"сегмент {n} не дописался")
+        raise GameError("segment_failed", str(n))
     seg["rec_s"] = round(time.time() - t, 1)
     new = sorted(set(glob.glob(os.path.join(raw_dir, "take*"))) - before)
     if not new:
-        raise GameError(f"сегмент {n}: HLAE не создал файл")
+        raise GameError("segment_nofile", str(n))
     return new[-1]
 
 
@@ -218,26 +220,33 @@ class Library:
     """meta.json + index.json for one recording, rewritten each time a clip is ready,
     so the site can show clips while the rest are still recording."""
 
-    def __init__(self, key, dem_path, info, me, clips, out_dir, t0):
+    def __init__(self, key, dem_path, info, me, clips, out_dir, t0, ffmpeg_exe):
         self.lock = threading.Lock()
         self.out_dir = out_dir
         self.t0 = t0
+        self.ffmpeg = ffmpeg_exe
         self.meta = {
             "key": key,
             "demo": os.path.basename(dem_path),
+            "demo_path": dem_path,
             "map": info["map"],
             "player": me,
+            "score": [me.get("won", 0), me.get("lost", 0)],
+            "match_time": demo.match_time(dem_path),
             "players": info["players"],
             "rounds": [{"number": r["number"], "winner": r["winner"]} for r in info["rounds"]],
             "clips": clips,
             "status": "recording",
             "recorded": time.strftime("%Y-%m-%d %H:%M"),
             "took_seconds": 0,
+            "thumb": None,
         }
         self.save()
 
     def clip_ready(self, clip, file):
         clips = self.meta["clips"]
+        if file and not self.meta["thumb"]:
+            self.meta["thumb"] = make_thumb(self.ffmpeg, os.path.join(self.out_dir, file), self.out_dir, self.meta["map"])
         with self.lock:
             clip["file"] = file
             offs, acc = [], 0.0
@@ -262,11 +271,43 @@ class Library:
             with open(os.path.join(self.out_dir, "meta.json"), "w", encoding="utf-8") as f:
                 json.dump(self.meta, f, ensure_ascii=False, indent=1)
             m = self.meta
-            update_index({k: m[k] for k in ("key", "demo", "map", "player", "recorded", "took_seconds", "status")}
+            update_index({k: m.get(k) for k in ("key", "demo", "map", "player", "recorded", "took_seconds",
+                                                "status", "score", "match_time", "thumb")}
                          | {"clips": sum(1 for c in m["clips"] if c.get("file"))})
 
 
-def run(dem_path, steamid, log=print, progress=lambda done, total: None, limit=None):
+MAPS_DIR = "_maps"  # inside the library: one picture per map, reused for demos not recorded yet
+
+
+def make_thumb(ffmpeg_exe, clip_path, out_dir, map_name):
+    """A frame from the player's own footage as the card picture (and the map's picture)."""
+    try:
+        thumb = os.path.join(out_dir, "thumb.jpg")
+        subprocess.run([ffmpeg_exe, "-hide_banner", "-loglevel", "error", "-y", "-ss", "1.5", "-i", clip_path,
+                        "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "4", thumb],
+                       capture_output=True, creationflags=config.NO_WINDOW, timeout=30)
+        if not os.path.exists(thumb):
+            return None
+        maps = os.path.join(config.LIBRARY, MAPS_DIR)
+        os.makedirs(maps, exist_ok=True)
+        map_pic = os.path.join(maps, f"{map_name}.jpg")
+        if map_name and not os.path.exists(map_pic):
+            shutil.copyfile(thumb, map_pic)
+        return "thumb.jpg"
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+TOASTS = {
+    "ru": ("Killcam записывает хайлайты", "CS2 работает в фоне. Не запускай CS2 и не закрывай Steam.",
+           "Хайлайты готовы", "{n} клипов — открой Killcam"),
+    "en": ("Killcam is recording", "CS2 runs in the background. Don't start CS2 or close Steam.",
+           "Highlights ready", "{n} clips — open Killcam"),
+}
+
+
+def run(dem_path, steamid, log=print, progress=lambda done, total: None, limit=None,
+        phase=lambda name: None):
     cfg = config.load()
     t0 = time.time()
     dem_path = demo.unpack_if_gz(dem_path, os.path.join(config.WORK, "demos"))
@@ -275,17 +316,19 @@ def run(dem_path, steamid, log=print, progress=lambda done, total: None, limit=N
     # CS2 takes ~30 s to start; parse the demo meanwhile
     rel_demo = stage_demo(cfg, dem_path, did)
     if cs2_running():
-        raise GameError("Закрой CS2 перед записью — её нужно перезапустить через HLAE.")
-    stealth.toast("Записываю хайлайты CS2",
-                  "CS2 работает в фоне. Не запускай CS2 и не закрывай Steam, пока запись не закончится.")
+        raise GameError("cs2_running")
+    toast = TOASTS.get(cfg["lang"], TOASTS["en"])
+    stealth.toast(toast[0], toast[1])
+    phase("launch")
     with stealth.low_graphics(cfg["steam_dir"]), stealth.WindowHider():
         launch(cfg, log)
-        meta = _run_in_game(cfg, log, progress, limit, t0, dem_path, did, steamid, rel_demo)
-    stealth.toast("Хайлайты готовы", f"{len([c for c in meta['clips'] if c.get('file')])} клипов — смотри на сайте.")
+        meta = _run_in_game(cfg, log, progress, limit, t0, dem_path, did, steamid, rel_demo, phase)
+    stealth.toast(toast[2], toast[3].format(n=len([c for c in meta["clips"] if c.get("file")])))
+    phase("done")
     return meta
 
 
-def _run_in_game(cfg, log, progress, limit, t0, dem_path, did, steamid, rel_demo):
+def _run_in_game(cfg, log, progress, limit, t0, dem_path, did, steamid, rel_demo, phase):
     try:
         log("Читаю демку…")
         info = demo.analyze(dem_path)
@@ -308,7 +351,7 @@ def _run_in_game(cfg, log, progress, limit, t0, dem_path, did, steamid, rel_demo
             os.makedirs(d)
         shutil.rmtree(out_dir, ignore_errors=True)
         os.makedirs(out_dir)
-        lib = Library(key, dem_path, info, me, clips, out_dir, t0)
+        lib = Library(key, dem_path, info, me, clips, out_dir, t0, cfg["ffmpeg"])
 
         takes = {}
         ready = queue.Queue()
@@ -322,11 +365,12 @@ def _run_in_game(cfg, log, progress, limit, t0, dem_path, did, steamid, rel_demo
 
         gluer = threading.Thread(target=glue, daemon=True)
         gluer.start()
-        rec_time = _record_all(cfg, log, progress, rel_demo, raw_dir, segs, takes, clips, ready)
+        rec_time = _record_all(cfg, log, progress, rel_demo, raw_dir, segs, takes, clips, ready, phase)
     except Exception:
         subprocess.run(["taskkill", "/F", "/IM", "cs2.exe"], capture_output=True, creationflags=config.NO_WINDOW)
         raise
     log(f"Запись: {rec_time:.0f} с на {plan.total_seconds(clips):.0f} с видео")
+    phase("finishing")
     ready.put(None)
     gluer.join()
     lib.save("done")
@@ -336,17 +380,20 @@ def _run_in_game(cfg, log, progress, limit, t0, dem_path, did, steamid, rel_demo
     return lib.meta
 
 
-def _record_all(cfg, log, progress, rel_demo, raw_dir, segs, takes, clips, ready):
+def _record_all(cfg, log, progress, rel_demo, raw_dir, segs, takes, clips, ready, phase):
     con = NetCon(cfg["netcon_port"], log)
     con.connect(timeout=180)
     log("CS2 запущена, гружу демку…")
+    phase("loading")
     con.send("mirv_cmd clear", 'mirv_cmd addAtTick 70 "demo_pause; echo FH_LOADED"', f"playdemo {rel_demo}")
     if not con.wait_for("FH_LOADED", timeout=180):
-        raise GameError("демка не загрузилась")
+        raise GameError("demo_load_failed")
     setup_streams(con, cfg, raw_dir)
+    phase("recording")
     t_rec = time.time()
     by_id = {c["id"]: c for c in clips}
     total = len(segs)
+    progress(0, total)
     for n, seg in enumerate(segs, 1):
         ts = time.time()
         try:

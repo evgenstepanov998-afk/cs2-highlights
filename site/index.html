@@ -121,7 +121,13 @@ async function boot() {
   let st;
   try { await api("/api/ping"); st = await api("/api/setup"); }
   catch { showOffline(); bootTimer = setTimeout(boot, 3000); return; }
-  if (!st.ready) { showSetup(st); if (st.running || st.accepted) bootTimer = setTimeout(boot, 1000); return; }
+  if (!st.ready) {
+    // terms were accepted earlier but tools are gone (deleted, other PC user…) — just install again
+    if (st.accepted && !st.running && !st.error) { try { st = await api("/api/setup/accept", {}); } catch { } }
+    showSetup(st);
+    if (st.running || st.accepted) bootTimer = setTimeout(boot, 1000);
+    return;
+  }
   ready = true;
   route();
 }

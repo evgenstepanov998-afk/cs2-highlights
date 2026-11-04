@@ -5,6 +5,7 @@ has had the site open for a while and nothing is being recorded.
 """
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -195,6 +196,10 @@ class Handler(SimpleHTTPRequestHandler):
                     return self._json({"error": "Уже идёт запись"}, 409)
                 start_job(data["path"], data["steamid"])
                 return self._json({"ok": True})
+            if self.path == "/api/quit":
+                self._json({"ok": True})
+                threading.Thread(target=shutdown, daemon=True).start()
+                return
             if self.path == "/api/open-folder":
                 os.startfile(os.path.join(config.LIBRARY, data.get("key", "")) if data.get("key") else config.LIBRARY)
                 return self._json({"ok": True})
@@ -258,7 +263,7 @@ def _already_running(port):
         return False
 
 
-def serve(open_browser=True):
+def serve(open_browser=True, with_window=True):
     os.makedirs(config.LIBRARY, exist_ok=True)
     if getattr(sys, "frozen", False):  # windowed exe: keep a log instead of a console
         sys.stdout = sys.stderr = open(config.LOG, "a", encoding="utf-8", buffering=1)
@@ -278,4 +283,40 @@ def serve(open_browser=True):
     print(time.strftime("%Y-%m-%d %H:%M:%S"), "CS2 Highlights", config.VERSION, "на порту", port)
     if open_browser:
         webbrowser.open(site_url(port))
-    srv.serve_forever()
+    if not with_window:
+        srv.serve_forever()
+        return
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    from . import ui
+    ui.run(JOB, site_url(port), shutdown)
+
+
+def shutdown():
+    """Quit for real: stop a running recording (closing CS2), put the user's graphics back."""
+    print("Выключаюсь по кнопке.")
+    if JOB["running"]:
+        subprocess.run(["taskkill", "/F", "/IM", "cs2.exe"], capture_output=True, creationflags=config.NO_WINDOW)
+        stealth.wait_cs2_exit(10)
+        _mark_stopped()
+    cfg = config.load()
+    if cfg.get("steam_dir"):
+        stealth.restore_video(cfg["steam_dir"])
+    os._exit(0)
+
+
+def _mark_stopped():
+    """Recordings cut off by quitting keep their finished clips, just not the 'recording' badge."""
+    for path in (os.path.join(config.LIBRARY, "index.json"),
+                 *[os.path.join(config.LIBRARY, d, "meta.json") for d in os.listdir(config.LIBRARY)
+                   if os.path.isdir(os.path.join(config.LIBRARY, d))]):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            items = data if isinstance(data, list) else [data]
+            for it in items:
+                if it.get("status") == "recording":
+                    it["status"] = "stopped"
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=1)
+        except (OSError, ValueError):
+            pass

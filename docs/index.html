@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Killcam — хайлайты из демок CS2</title>
-<meta name="description" content="Killcam сам находит в демке CS2 убийства и смерти игрока, записывает их от первого лица и раскладывает по раундам.">
-<meta property="og:title" content="Killcam — хайлайты из демок CS2">
+<title>POVcut — хайлайты из демок CS2</title>
+<meta name="description" content="POVcut сам находит в демке CS2 убийства и смерти игрока, записывает их от первого лица и раскладывает по раундам.">
+<meta property="og:title" content="POVcut — хайлайты из демок CS2">
 <meta property="og:description" content="Каждый фраг — своими глазами. Демка → игрок → готово.">
 <meta property="og:image" content="img/viewer.jpg">
 <link rel="icon" href="img/logo.png">
@@ -75,34 +75,37 @@ footer a{color:var(--muted)}
 html[lang=en] [data-ru]{display:none}
 html[lang=en] [data-en]{display:revert}
 @media(max-width:860px){.steps,.features,.gallery{grid-template-columns:1fr}.shot{transform:none}nav .links a.hide-m{display:none}}
+  .renamed { font-size: 13px; opacity: .65; margin-bottom: 6px; }
 </style>
 </head>
 <body>
 <nav><div class="wrap">
-  <img src="img/logo.png" alt=""><b>Killcam</b>
+  <img src="img/logo.png" alt=""><b>POVcut</b>
   <div class="links">
     <a href="#how" class="hide-m"><span data-ru>Как работает</span><span data-en>How it works</span></a>
     <a href="#faq" class="hide-m">FAQ</a>
     <a href="https://discord.gg/SJjt7sdMVn" target="_blank" rel="noopener">Discord</a>
-    <a href="https://github.com/killcam-app/killcam" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://github.com/povcut-app/povcut" target="_blank" rel="noopener">GitHub</a>
     <div class="lang"><button data-l="ru" class="on">RU</button><button data-l="en">EN</button></div>
   </div>
 </div></nav>
 
 <header class="hero"><div class="wrap">
-  <img class="logo" src="img/logo.png" alt="Killcam">
+  <img class="logo" src="img/logo.png" alt="POVcut">
   <h1 data-ru>Каждый фраг —<br><span>своими глазами</span></h1>
   <h1 data-en>Every frag —<br><span>through your eyes</span></h1>
-  <p data-ru>Killcam сам находит в демке CS2 все убийства и смерти игрока, записывает их от первого лица и раскладывает по раундам. После смерти — повтор глазами убийцы.</p>
-  <p data-en>Killcam finds every kill and death of a player in a CS2 demo, records them first-person and lays them out round by round. After a death — a replay through the killer's eyes.</p>
+<p data-ru class="renamed">Раньше программа называлась Killcam — это она же, просто новое имя.</p>
+  <p data-en class="renamed">Formerly known as Killcam — same app, new name.</p>
+  <p data-ru>POVcut сам находит в демке CS2 все убийства и смерти игрока, записывает их от первого лица и раскладывает по раундам. После смерти — повтор глазами убийцы.</p>
+  <p data-en>POVcut finds every kill and death of a player in a CS2 demo, records them first-person and lays them out round by round. After a death — a replay through the killer's eyes.</p>
   <div class="cta">
-    <a class="btn primary" href="https://github.com/killcam-app/killcam/releases/latest/download/KillcamSetup.exe">
+    <a class="btn primary" href="https://github.com/povcut-app/povcut/releases/latest/download/POVcutSetup.exe">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
       <span data-ru>Скачать для Windows</span><span data-en>Download for Windows</span></a>
     <a class="btn" href="https://discord.gg/SJjt7sdMVn" target="_blank" rel="noopener">Discord</a>
   </div>
   <div class="meta"><span data-ru>Бесплатно · Windows 10/11 · нужна CS2 в Steam</span><span data-en>Free · Windows 10/11 · requires CS2 on Steam</span></div>
-  <div class="shot"><img src="img/viewer.jpg" alt="Killcam"></div>
+  <div class="shot"><img src="img/viewer.jpg" alt="POVcut"></div>
 </div></header>
 
 <section id="how"><div class="wrap">
@@ -111,8 +114,8 @@ html[lang=en] [data-en]{display:revert}
   <p class="sub" data-en>No manual demo scrubbing, no editing.</p>
   <div class="steps">
     <div class="step"><div class="n">1</div><b data-ru>Перетащи демку</b><b data-en>Drop a demo</b>
-      <span data-ru>.dem, .dem.gz или .dem.zst — как отдаёт FACEIT. Killcam сам находит демки в «Загрузках».</span>
-      <span data-en>.dem, .dem.gz or .dem.zst — the way FACEIT ships them. Killcam finds demos in Downloads by itself.</span></div>
+      <span data-ru>.dem, .dem.gz или .dem.zst — как отдаёт FACEIT. POVcut сам находит демки в «Загрузках».</span>
+      <span data-en>.dem, .dem.gz or .dem.zst — the way FACEIT ships them. POVcut finds demos in Downloads by itself.</span></div>
     <div class="step"><div class="n">2</div><b data-ru>Выбери игрока</b><b data-en>Pick a player</b>
       <span data-ru>Себя или друга. Сразу видно K/D, счёт и сколько будет клипов.</span>
       <span data-en>Yourself or a friend. K/D, score and clip count are shown upfront.</span></div>
@@ -131,7 +134,7 @@ html[lang=en] [data-en]{display:revert}
     <div class="f"><i>📊</i><div><b data-ru>По раундам</b><b data-en>Round by round</b>
       <span data-ru>Таймлайн матча, мультикиллы, хедшоты, прострелы, через смок.</span><span data-en>Match timeline, multikills, headshots, wallbangs, through smoke.</span></div></div>
     <div class="f"><i>🛡</i><div><b data-ru>Аккуратно с ПК</b><b data-en>Gentle with your PC</b>
-      <span data-ru>CS2 работает в фоне без окна и звука, графика возвращается сама.</span><span data-en>CS2 runs hidden and muted, your graphics settings come back automatically.</span></div></div>
+      <span data-ru>CS2 работает в фоне без окна и звука, с твоими настройками графики.</span><span data-en>CS2 runs hidden and muted, with your own graphics settings.</span></div></div>
   </div>
   <div class="gallery" style="grid-template-columns:1fr">
     <figure><img src="img/library.jpg" alt=""><figcaption data-ru>Библиотека: карта, счёт, дата матча</figcaption><figcaption data-en>Library: map, score, match date</figcaption></figure>
@@ -151,14 +154,14 @@ html[lang=en] [data-en]{display:revert}
   <h2>FAQ</h2><p class="sub"></p>
   <div class="faq">
     <details><summary data-ru>Это безопасно для аккаунта? Не будет VAC?</summary><summary data-en>Is it safe for my account? Any VAC risk?</summary>
-      <p data-ru>Killcam запускает отдельную копию CS2 через HLAE в режиме -insecure только чтобы проиграть демку. VAC в этом режиме выключен, на сервера из неё никто не заходит. Твоя обычная CS2 не меняется.</p>
-      <p data-en>Killcam starts a separate CS2 through HLAE in -insecure mode only to play the demo. VAC is off in that mode and it never joins servers. Your normal CS2 is untouched.</p></details>
+      <p data-ru>POVcut запускает отдельную копию CS2 через HLAE в режиме -insecure только чтобы проиграть демку. VAC в этом режиме выключен, на сервера из неё никто не заходит. Твоя обычная CS2 не меняется.</p>
+      <p data-en>POVcut starts a separate CS2 through HLAE in -insecure mode only to play the demo. VAC is off in that mode and it never joins servers. Your normal CS2 is untouched.</p></details>
     <details><summary data-ru>Windows пишет «Система защитила ваш компьютер»</summary><summary data-en>Windows says "Windows protected your PC"</summary>
       <p data-ru>У программы пока нет платной цифровой подписи. Нажми «Подробнее» → «Выполнить в любом случае».</p>
       <p data-en>The app isn't code-signed yet. Click "More info" → "Run anyway".</p></details>
     <details><summary data-ru>Куда сохраняются клипы?</summary><summary data-en>Where are clips saved?</summary>
-      <p data-ru>В «Документы\Killcam». В интернет ничего не загружается.</p>
-      <p data-en>In Documents\Killcam. Nothing is uploaded anywhere.</p></details>
+      <p data-ru>В «Документы\POVcut». В интернет ничего не загружается.</p>
+      <p data-en>In Documents\POVcut. Nothing is uploaded anywhere.</p></details>
     <details><summary data-ru>Демка не открывается</summary><summary data-en>A demo won't open</summary>
       <p data-ru>CS2 не умеет проигрывать демки, записанные до своего последнего обновления. Возьми свежую демку — или жди патча от Valve.</p>
       <p data-en>CS2 can't play demos recorded before its latest update. Use a fresh demo or wait for a Valve patch.</p></details>
@@ -173,13 +176,13 @@ html[lang=en] [data-en]{display:revert}
     <h2 data-ru>Посмотри свою последнюю катку</h2><h2 data-en>Watch your last match</h2>
     <p class="sub" data-ru>Скачай, перетащи демку — через минуту первые клипы.</p>
     <p class="sub" data-en>Download, drop a demo — first clips in a minute.</p>
-    <a class="btn primary" href="https://github.com/killcam-app/killcam/releases/latest/download/KillcamSetup.exe">
-      <span data-ru>Скачать Killcam</span><span data-en>Download Killcam</span></a>
+    <a class="btn primary" href="https://github.com/povcut-app/povcut/releases/latest/download/POVcutSetup.exe">
+      <span data-ru>Скачать POVcut</span><span data-en>Download POVcut</span></a>
   </div>
 </div></section>
 
 <footer><div class="wrap">
-  Killcam · <a href="https://github.com/killcam-app/killcam">GitHub</a> · <a href="https://discord.gg/SJjt7sdMVn">Discord</a><br>
+  POVcut · <a href="https://github.com/povcut-app/povcut">GitHub</a> · <a href="https://discord.gg/SJjt7sdMVn">Discord</a><br>
   <span data-ru>Не связан с Valve. Counter-Strike — товарный знак Valve Corporation.</span>
   <span data-en>Not affiliated with Valve. Counter-Strike is a trademark of Valve Corporation.</span>
 </div></footer>

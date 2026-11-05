@@ -1,0 +1,51 @@
+﻿POVcut END USER LICENSE AGREEMENT
+Version 1 · 5 November 2026
+
+This agreement is between you (the "User") and the developer of POVcut (the "Rights Holder"). By installing, running or otherwise using POVcut (the "Software") you confirm that you have read and accept this agreement. If you do not agree, do not install or use the Software.
+
+1. WHAT THE SOFTWARE DOES
+1.1. The Software reads a Counter-Strike 2 demo file chosen by the User, starts a separate copy of CS2 on the User's computer through the HLAE tool and records video clips of the chosen players' moments.
+1.2. While recording, the Software starts CS2 in -insecure mode (VAC is off in that mode and this copy cannot connect to game servers), hides the game window and temporarily lowers the in-game volume of CS2; graphics stay as the User set them by default and are lowered only in "Fast" mode. After recording the game settings are put back, also at the next Windows sign-in if the computer turned off during recording. The Software does not change Windows sound settings and does not touch a copy of CS2 the User starts on their own.
+
+2. LICENSE
+2.1. The Rights Holder grants the User a free, non-exclusive, non-transferable, revocable license to install and use the Software on their own devices for personal, non-commercial purposes.
+2.2. All rights in the Software, its code, design, logo and the name POVcut belong to the Rights Holder. The User only receives the right to use it within this agreement.
+
+3. RESTRICTIONS
+Without the Rights Holder's written permission, except where the law expressly allows it, you may not:
+a) decompile, disassemble, extract the source code of, or otherwise reverse engineer the Software;
+b) modify the Software or create derivative products based on it;
+c) sell, rent or distribute copies of the Software or host its installer elsewhere (sharing a link to the official website is fine);
+d) remove or alter the watermark, logo or rights notices;
+e) use the Software to break the rules of games and platforms, the rights of others or the law.
+
+4. THIRD-PARTY SOFTWARE AND SERVICES
+4.1. On first start the Software downloads HLAE (advancedfx.org) and ffmpeg from their official sources. They are distributed under their authors' own licenses and are not part of the Software.
+4.2. Counter-Strike 2 and Steam belong to Valve Corporation. FACEIT is a trademark of its owner. The Software is not affiliated with, endorsed or supported by Valve or FACEIT. Names of games and services are used only to describe compatibility.
+4.3. The User is responsible for following the terms of Steam, CS2, FACEIT and any other service they use, including the rules on downloading demos.
+
+5. USER DEMOS AND VIDEOS
+5.1. Demos are processed only on the User's computer. The Rights Holder does not receive, store or distribute the User's demos or videos.
+5.2. The User decides where and how to publish the clips they create and is responsible for the rules of those platforms and the rights of others (for example, music or other players' likeness).
+
+6. DATA
+6.1. The Software works locally. Only the following goes online:
+— a request to GitHub to check for updates (if enabled);
+— downloading HLAE and ffmpeg on first start;
+— a bug report, only when the User presses "Report a problem" (logs, Windows version and app settings, without personal files, paths or user name);
+— a clip, only when the User sends it to Discord through their own webhook.
+6.2. The Software does not collect advertising identifiers and does not sell data.
+
+7. NO WARRANTY
+The Software is provided "as is". The Rights Holder does not warrant that it will run without errors, with every demo or every CS2 version, or that it fits a particular purpose. CS2 updates may break the Software or make old demos impossible to record.
+
+8. LIMITATION OF LIABILITY
+To the maximum extent permitted by law, the Rights Holder is not liable for any direct or indirect damage related to using or being unable to use the Software, including data loss, game or computer failures, restrictions or bans of accounts on third-party platforms, or the actions of third parties.
+
+9. CHANGES AND TERMINATION
+9.1. The Rights Holder may update the Software and this agreement. The Software will announce a new version of the agreement on start; by continuing to use the Software the User accepts it.
+9.2. The license ends automatically if this agreement is breached. The User may end it at any time by uninstalling the Software.
+
+10. OTHER
+10.1. If any provision is found invalid, the rest of the agreement stays in force.
+10.2. Questions and requests: the Discord server linked on the official website https://povcut-app.github.io/povcut/

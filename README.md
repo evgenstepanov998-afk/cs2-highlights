@@ -1,38 +1,34 @@
-<p align="center"><img src="docs/img/logo.png" width="96" alt="Killcam"></p>
+<p align="center"><img src="docs/img/logo.png" width="96" alt="POVcut"></p>
 
-<h1 align="center">Killcam</h1>
+<h1 align="center">POVcut</h1>
 <p align="center"><b>Каждый фраг — своими глазами.</b><br>Хайлайты из демок CS2: все убийства и смерти игрока от первого лица, повтор глазами убийцы, по раундам.</p>
+<p align="center"><sub>Раньше называлась Killcam · formerly Killcam</sub></p>
 
 <p align="center">
-  <a href="https://github.com/killcam-app/killcam/releases/latest/download/KillcamSetup.exe"><b>⬇ Скачать для Windows</b></a> ·
-  <a href="https://killcam-app.github.io/killcam/">Сайт</a> ·
+  <a href="https://github.com/povcut-app/povcut/releases/latest/download/POVcutSetup.exe"><b>⬇ Скачать для Windows</b></a> ·
+  <a href="https://povcut-app.github.io/povcut/">Сайт</a> ·
   <a href="https://discord.gg/SJjt7sdMVn">Discord</a>
 </p>
 
-![Killcam](docs/img/viewer.jpg)
+![POVcut](docs/img/viewer.jpg)
 
 ## Как пользоваться
 
-1. Скачай и установи `KillcamSetup.exe`. Если Windows покажет «Система Windows защитила ваш компьютер» — «Подробнее» → «Выполнить в любом случае».
-2. При первом запуске прими условия — Killcam скачает HLAE и ffmpeg (~130 МБ, один раз).
-3. Перетащи демку (`.dem`, `.dem.gz`, `.dem.zst`) → выбери игрока → **Записать**. Первые клипы — через минуту, весь матч — ~3 минуты.
+1. Скачай и установи `POVcutSetup.exe`. Если Windows покажет «Система Windows защитила ваш компьютер» — «Подробнее» → «Выполнить в любом случае».
+2. При первом запуске прими лицензионное соглашение — POVcut скачает HLAE и ffmpeg (~130 МБ, один раз).
+3. Перетащи демку (`.dem`, `.dem.gz`, `.dem.zst`) → выбери игрока → **Записать**. Первые клипы — через минуту, весь матч — ~3–4 минуты.
 
-## Что Killcam делает на компьютере
+## Что POVcut делает на компьютере
 
-- Запускает отдельную CS2 через [HLAE](https://www.advancedfx.org/) в режиме `-insecure` (без VAC) — только чтобы проиграть демку.
-- На время записи ставит минимальную графику и возвращает твои настройки сразу после.
-- Прячет окно CS2 и выключает её звук в микшере Windows.
-- Хранит клипы в `Документы\Killcam`. Ничего не загружает, кроме отчёта об ошибке, если ты сам нажмёшь «Сообщить об ошибке».
-- Раз при запуске проверяет обновления на GitHub (можно выключить в настройках).
+- Запускает отдельную CS2 через [HLAE](https://www.advancedfx.org/) в режиме `-insecure` (без VAC) — только чтобы проиграть демку. Твою CS2, запущенную из Steam, не трогает.
+- Окно этой CS2 сразу открывается за пределами экрана, звук игры на время записи почти выключен внутри CS2. Звук Windows не меняется.
+- Графика — твоя собственная (можно включить «быструю» запись с низкой графикой). Все настройки CS2 возвращаются после записи, даже если компьютер выключился посреди неё.
+- До запуска проверяет, с какой версии CS2 демка, и предупреждает, если она может не открыться.
+- Хранит клипы в `Документы\POVcut`. В интернет уходит только проверка обновлений и отчёт об ошибке, если ты сам нажмёшь «Сообщить об ошибке».
 
-## Сборка
+## Лицензия
 
-```powershell
-pip install -r requirements.txt pyinstaller
-.\build.ps1          # → dist\KillcamSetup.exe (нужен Inno Setup 6)
-```
-
-Без сборки: `python killcam.py`.
+POVcut — бесплатная программа с закрытым исходным кодом. Условия: [лицензионное соглашение](LICENSE.txt) ([English](LICENSE-en.txt)).
 
 ---
-Не связан с Valve. Counter-Strike — товарный знак Valve Corporation.
+Не связан с Valve и FACEIT. Counter-Strike — товарный знак Valve Corporation.
